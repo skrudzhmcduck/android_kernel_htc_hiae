@@ -292,7 +292,7 @@ static struct qseecom_key_id_usage_desc key_id_array[] = {
 	},
 
 	{
-#ifdef CONFIG_MACH_DUMMY
+#ifndef CONFIG_MACH_DUMMY
 		.desc = "SDCC ICE Full Disk Encryption",
 #else
 		.desc = "r_info\0\0qseecom_unload_app",
