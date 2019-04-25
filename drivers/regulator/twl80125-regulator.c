@@ -476,6 +476,7 @@ static int twl80125_probe(struct i2c_client *client, const struct i2c_device_id 
 	int num_vregs = 0;
 	int vreg_idx = 0;
 	int ret = 0;
+	int i = 0;
 	u32 init_volt;
 
 	pr_info("%s007.\n", __func__);
@@ -634,18 +635,26 @@ static int twl80125_probe(struct i2c_client *client, const struct i2c_device_id 
 	twl80125_buck1_set_vsel(1);
 	twl80125_buck2_set_vsel(1);
 
-	twl80125_vreg_enable(regulator->twl80125_vregs[0].rdev); 
-	mdelay(2);
+	for ( i = 0 ; i < 3; i++) { 
+		twl80125_vreg_enable(regulator->twl80125_vregs[0].rdev); 
+		mdelay(2);
 
-	twl80125_vreg_set_voltage(regulator->twl80125_vregs[6].rdev, 1800000, 1800000, NULL);
-	twl80125_vreg_enable(regulator->twl80125_vregs[6].rdev); 
-	mdelay(2);
+		twl80125_vreg_set_voltage(regulator->twl80125_vregs[6].rdev, 1800000, 1800000, NULL);
+		twl80125_vreg_enable(regulator->twl80125_vregs[6].rdev); 
+		mdelay(2);
 
-	twl80125_vreg_disable(regulator->twl80125_vregs[0].rdev); 
-	mdelay(2);
+		twl80125_vreg_disable(regulator->twl80125_vregs[0].rdev); 
+		mdelay(2);
 
-	twl80125_clear_error(); 
+		twl80125_clear_error(); 
 
+		if (twl80125_vreg_is_enabled(regulator->twl80125_vregs[6].rdev)) {
+                        pr_err("%s: ldo5 enable successed\n", __func__);
+                        break;
+                } else
+                        pr_err("%s: ldo5 enable try %d times, failed\n", __func__, i+1);
+		mdelay(10);
+	}
 	return ret;
 
 fail_free_vreg:

@@ -21,9 +21,15 @@
 #endif
 
 
+/* -------------------------------------------------------------------- */
+/* function prototypes							*/
+/* -------------------------------------------------------------------- */
 static size_t fpc1020_calc_image_size(fpc1020_data_t *fpc1020);
 
 
+/* -------------------------------------------------------------------- */
+/* function definitions							*/
+/* -------------------------------------------------------------------- */
 int fpc1020_init_capture(fpc1020_data_t *fpc1020)
 {
 	fpc1020->capture.state = FPC1020_CAPTURE_STATE_IDLE;
@@ -37,12 +43,14 @@ int fpc1020_init_capture(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_write_capture_setup(fpc1020_data_t *fpc1020)
 {
 	return fpc1020_write_sensor_setup(fpc1020);
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_write_test_setup(fpc1020_data_t *fpc1020, u16 pattern)
 {
 	int error = 0;
@@ -74,6 +82,7 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_write_cb_test_setup_102x(fpc1020_data_t *fpc1020, bool invert)
 {
 	int error = 0;
@@ -131,6 +140,7 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_write_cb_test_setup_1155(fpc1020_data_t *fpc1020, bool invert)
 {
 	int error = 0;
@@ -193,12 +203,14 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_write_cb_test_setup_1145(fpc1020_data_t *fpc1020, bool invert)
 {
 	return fpc1020_write_cb_test_setup_1155(fpc1020, invert);
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_write_cb_test_setup(fpc1020_data_t *fpc1020, bool invert)
 {
 	if (fpc1020->chip.type == FPC1020_CHIP_1155X) {
@@ -211,6 +223,7 @@ int fpc1020_write_cb_test_setup(fpc1020_data_t *fpc1020, bool invert)
 }
 
 
+/* -------------------------------------------------------------------- */
 bool fpc1020_capture_check_ready(fpc1020_data_t *fpc1020)
 {
 	fpc1020_capture_state_t state = fpc1020->capture.state;
@@ -221,6 +234,7 @@ bool fpc1020_capture_check_ready(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_capture_task(fpc1020_data_t *fpc1020)
 {
 	struct timespec ts_t1, ts_t2, ts_t3, ts_delta;
@@ -442,7 +456,7 @@ int fpc1020_capture_task(fpc1020_data_t *fpc1020)
 	if (error)
 		goto out_error;
 
-	
+	/* Update finger_present_status after image capture */
 	fpc1020_check_finger_present_raw(fpc1020);
 
 	if (mode != FPC1020_MODE_WAIT_FINGER_UP)
@@ -521,6 +535,7 @@ out_error:
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_capture_wait_finger_down(fpc1020_data_t *fpc1020)
 {
 	int error;
@@ -547,6 +562,7 @@ int fpc1020_capture_wait_finger_down(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_capture_wait_finger_up(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -571,6 +587,7 @@ int fpc1020_capture_wait_finger_up(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_capture_settings(fpc1020_data_t *fpc1020, int select)
 {
 	int error = 0;
@@ -646,6 +663,7 @@ out_err:
 	return error;
 }
 
+/* -------------------------------------------------------------------- */
 int fpc1020_capture_finger_detect_settings(fpc1020_data_t *fpc1020)
 {
 	dev_dbg(&fpc1020->spi->dev, "%s\n", __func__);
@@ -654,6 +672,7 @@ int fpc1020_capture_finger_detect_settings(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 static size_t fpc1020_calc_image_size(fpc1020_data_t *fpc1020)
 {
 	int image_byte_size = fpc1020->setup.capture_row_count *
@@ -678,6 +697,7 @@ static size_t fpc1020_calc_image_size(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_capture_set_crop(fpc1020_data_t *fpc1020,
 					int first_column,
 					int num_columns,
@@ -700,6 +720,7 @@ int fpc1020_capture_set_crop(fpc1020_data_t *fpc1020,
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_capture_buffer(fpc1020_data_t *fpc1020,
 				u8 *data,
 				size_t offset,
@@ -733,6 +754,7 @@ out_error:
 }
 
 
+/* -------------------------------------------------------------------- */
 extern int fpc1020_capture_deferred_task(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -749,4 +771,5 @@ extern int fpc1020_capture_deferred_task(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 

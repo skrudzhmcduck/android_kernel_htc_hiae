@@ -1307,7 +1307,8 @@ lpm_start:
 	device_bus_suspend = phy->otg->gadget && test_bit(ID, &motg->inputs) &&
 		test_bit(A_BUS_SUSPEND, &motg->inputs) &&
 		motg->caps & ALLOW_LPM_ON_DEV_SUSPEND;
-	dcp = motg->chg_type == USB_DCP_CHARGER;
+
+	dcp = (motg->chg_type == USB_DCP_CHARGER) && !motg->is_ext_chg_dcp;
 	prop_charger = motg->chg_type == USB_PROPRIETARY_CHARGER;
 	floated_charger = motg->chg_type == USB_FLOATED_CHARGER;
 
@@ -1327,8 +1328,9 @@ lpm_start:
 	writel_relaxed(config2, USB_GENCONFIG2);
 
 
-	if ((test_bit(B_SESS_VLD, &motg->inputs) && !device_bus_suspend &&
-		!dcp && !prop_charger && !floated_charger) ||
+	if ((test_bit(B_SESS_VLD, &motg->inputs) &&
+		!device_bus_suspend && !dcp && !motg->is_ext_chg_dcp &&
+		!prop_charger && !floated_charger) ||
 		test_bit(A_BUS_REQ, &motg->inputs) || sm_work_busy) {
 		msm_otg_dbg_log_event(phy, "LPM ENTER ABORTED",
 				motg->inputs, motg->chg_type);
@@ -1511,11 +1513,12 @@ phcd_retry:
 	atomic_set(&motg->in_lpm, 1);
 	wake_up(&motg->host_suspend_wait);
 
-	
-
-	
-	if (host_bus_suspend)
+	if (host_bus_suspend || device_bus_suspend) {
+		
 		enable_irq(motg->async_irq);
+		enable_irq(motg->irq);
+	}
+
 	if (motg->phy_irq)
 		enable_irq(motg->phy_irq);
 	if (host_bus_suspend)
@@ -1567,14 +1570,12 @@ static int msm_otg_resume(struct msm_otg *motg)
 				atomic_read(&motg->in_lpm), phy->state);
 		return 0;
 	}
-	USBH_INFO("%s\n", __func__);
+	USB_INFO("%s\n", __func__);
 
 	msm_bam_notify_lpm_resume(CI_CTRL);
 
-	
-	if (motg->host_bus_suspend)
+	if (motg->host_bus_suspend || motg->device_bus_suspend)
 		disable_irq(motg->irq);
-	
 
 	wake_lock(&motg->wlock);
 
@@ -1723,10 +1724,8 @@ skip_phy_resume:
 	enable_irq(motg->irq);
 
 	
-	
-	if (motg->host_bus_suspend)
+	if (motg->host_bus_suspend || motg->device_bus_suspend)
 		disable_irq(motg->async_irq);
-	
 
 	if (motg->phy_irq_pending) {
 		motg->phy_irq_pending = false;
@@ -1736,7 +1735,7 @@ skip_phy_resume:
 	if (motg->host_bus_suspend)
 		usb_hcd_resume_root_hub(hcd);
 
-	pr_info("[USB] USB exited from low power mode\n");
+	pr_info("USB exited from low power mode\n");
 	msm_otg_dbg_log_event(phy, "LPM EXIT DONE",
 			motg->caps, motg->lpm_flags);
 
@@ -2189,7 +2188,7 @@ static void msm_otg_start_peripheral(struct usb_otg *otg, int on)
 static void msm_otg_notify_usb_disabled(void)
 {
 	struct msm_otg *motg = the_msm_otg;
-	USBH_INFO("%s\n", __func__);
+	USB_INFO("%s\n", __func__);
 	queue_work(motg->otg_wq, &motg->sm_work);
 }
 
@@ -2360,7 +2359,8 @@ static bool msm_chg_mhl_detect(struct msm_otg *motg)
 
 	return ret;
 }
-
+#define RETRY_CHECK_TIMES 5
+extern void usb_set_connect_type(int);
 static void msm_otg_chg_check_timer_func(unsigned long data)
 {
 	struct msm_otg *motg = (struct msm_otg *) data;
@@ -2370,19 +2370,33 @@ static void msm_otg_chg_check_timer_func(unsigned long data)
 		!test_bit(B_SESS_VLD, &motg->inputs) ||
 		otg->phy->state != OTG_STATE_B_PERIPHERAL ||
 		otg->gadget->speed != USB_SPEED_UNKNOWN) {
-		dev_dbg(otg->phy->dev, "Nothing to do in chg_check_timer\n");
+		USB_INFO("%s: Nothing to do in chg_check_timer. atomic_read(&motg->in_lpm):%d, test_bit(B_SESS_VLD, &motg->inputs):%d, otg->phy->state:%s, otg->gadget->speed:%d, \n",
+			__func__, atomic_read(&motg->in_lpm), test_bit(B_SESS_VLD, &motg->inputs), usb_otg_state_string(otg->phy->state), otg->gadget->speed);
 		return;
 	}
 
-	USBH_INFO("%s: count = %d, connect_type = %d\n", __func__,
-			motg->chg_check_count, motg->connect_type);
+	USB_INFO("%s: count = %d, connect_type = %d, line_state = %x\n",
+				__func__, motg->chg_check_count, motg->connect_type,
+				(readl_relaxed(USB_PORTSC) & PORTSC_LS));
+
 	if ((readl_relaxed(USB_PORTSC) & PORTSC_LS) == PORTSC_LS) {
-		dev_dbg(otg->phy->dev, "DCP is detected as SDP\n");
+		USB_INFO("DCP is detected as SDP, change type to DCP\n");
 		msm_otg_dbg_log_event(&motg->phy, "DCP IS DETECTED AS SDP",
 				otg->phy->state, 0);
 		set_bit(B_FALSE_SDP, &motg->inputs);
 		queue_work(motg->otg_wq, &motg->sm_work);
+	
+		motg->connect_type = CONNECT_TYPE_AC;
+		usb_set_connect_type(CONNECT_TYPE_AC);
+	} else if (motg->chg_check_count < RETRY_CHECK_TIMES) {
+		motg->chg_check_count++;
+		mod_timer(&motg->chg_check_timer, CHG_RECHECK_DELAY);
+	} else {
+		USB_INFO("Unknown charging is detected\n");
+		motg->connect_type = CONNECT_TYPE_UNKNOWN;
+		usb_set_connect_type(CONNECT_TYPE_UNKNOWN);
 	}
+	
 }
 
 static bool msm_chg_aca_detect(struct msm_otg *motg)
@@ -2895,7 +2909,7 @@ static void msm_chg_detect_work(struct work_struct *w)
 		if (motg->chg_type == USB_DCP_CHARGER)
 			ulpi_write(phy, 0x2, 0x85);
 
-		USBH_INFO("chg_type = %s\n",
+		USB_INFO("chg_type = %s\n",
 			chg_to_string(motg->chg_type));
 		msm_otg_dbg_log_event(phy, "CHG WORK: CHG_TYPE",
 				motg->chg_type, motg->inputs);
@@ -3117,8 +3131,9 @@ static void msm_otg_sm_work(struct work_struct *w)
 				case USB_PROPRIETARY_CHARGER:
 					msm_otg_notify_charger(motg,
 							dcp_max_current);
-					otg->phy->state =
-						OTG_STATE_B_CHARGER;
+					if (!motg->is_ext_chg_dcp)
+						otg->phy->state =
+							OTG_STATE_B_CHARGER;
 					work = 0;
 					msm_otg_dbg_log_event(&motg->phy,
 					"PM RUNTIME: PROPCHG PUT",
@@ -3161,13 +3176,14 @@ static void msm_otg_sm_work(struct work_struct *w)
 					msm_otg_start_peripheral(otg, 1);
 					otg->phy->state =
 						OTG_STATE_B_PERIPHERAL;
+					motg->chg_check_count = 0; 
 					mod_timer(&motg->chg_check_timer,
 							CHG_RECHECK_DELAY);
 					break;
 				default:
 					break;
 				}
-				USBH_INFO("b_sess_vld, chg_state %d chg_type %d usb_disable %d\n",motg->chg_state ,motg->chg_type, msm_otg_usb_disable);
+				USB_INFO("b_sess_vld, chg_state %d chg_type %d usb_disable %d\n",motg->chg_state ,motg->chg_type, msm_otg_usb_disable);
 				break;
 			default:
 				break;
@@ -3187,7 +3203,7 @@ static void msm_otg_sm_work(struct work_struct *w)
 			break;
 		} else {
 			printk(KERN_WARNING "chg_work cancel");
-			USBH_INFO("!b_sess_vld && id\n");
+			USB_INFO("!b_sess_vld && id\n");
 			msm_otg_dbg_log_event(&motg->phy, "CHG_WORK CANCEL",
 					motg->inputs, otg->phy->state);
 			del_timer_sync(&motg->chg_check_timer);
@@ -3330,10 +3346,10 @@ static void msm_otg_sm_work(struct work_struct *w)
 				motg->pm_done = 1;
 			}
 		} else if (test_bit(ID_C, &motg->inputs)) {
-			USBH_INFO("id_c\n");
+			USB_INFO("id_c\n");
 			msm_otg_notify_charger(motg, IDEV_ACA_CHG_MAX);
 		} else if (test_bit(B_SESS_VLD, &motg->inputs) && msm_otg_usb_disable == 1) {
-			USBH_INFO("b_sess_vld && htc_usb_disable = 1\n");
+			USB_INFO("b_sess_vld && htc_usb_disable = 1\n");
 			if (motg->connect_type == CONNECT_TYPE_UNKNOWN)
 				del_timer_sync(&motg->chg_check_timer);
 			msm_otg_start_peripheral(otg, 0);
@@ -5621,15 +5637,19 @@ static int msm_otg_probe(struct platform_device *pdev)
 		dev_dbg(&pdev->dev, "Target does not use pinctrl\n");
 		motg->phy_pinctrl = NULL;
 	}
-	motg->gpio_state_init = pinctrl_lookup_state(motg->phy_pinctrl, "usbid_default_init");
-	if (IS_ERR_OR_NULL(motg->gpio_state_init)) {
-		printk("[USB] %s: can't get the pinctrl state\n", __func__);
-		ret = PTR_ERR(motg->gpio_state_init);
-		motg->phy_pinctrl = NULL;
+
+	if (motg->phy_pinctrl != NULL) {
+		motg->gpio_state_init = pinctrl_lookup_state(motg->phy_pinctrl, "usbid_default_init");
+		if (IS_ERR_OR_NULL(motg->gpio_state_init)) {
+			printk("[USB] %s: can't get the pinctrl state\n", __func__);
+			ret = PTR_ERR(motg->gpio_state_init);
+			motg->phy_pinctrl = NULL;
+		} else {
+			ret = pinctrl_select_state(motg->phy_pinctrl, motg->gpio_state_init);
+			if (ret)
+				printk("[USB] %s: can't init GPIO!\n",__func__);
+		}
 	}
-	ret = pinctrl_select_state(motg->phy_pinctrl, motg->gpio_state_init);
-	if (ret)
-		printk("[USB] %s: can't init GPIO!\n",__func__);
 
 	if (pdata->mhl_enable) {
 		mhl_usb_hs_switch = devm_regulator_get(motg->phy.dev,

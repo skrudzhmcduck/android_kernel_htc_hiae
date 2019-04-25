@@ -21,19 +21,13 @@
 #include <asm/memory.h>
 #include <asm/pgtable-hwdef.h>
 
-/*
- * Software defined PTE bits definition.
- */
 #define PTE_VALID		(_AT(pteval_t, 1) << 0)
-#define PTE_FILE		(_AT(pteval_t, 1) << 2)	/* only when !pte_present() */
+#define PTE_FILE		(_AT(pteval_t, 1) << 2)	
 #define PTE_DIRTY		(_AT(pteval_t, 1) << 55)
 #define PTE_SPECIAL		(_AT(pteval_t, 1) << 56)
 #define PTE_WRITE		(_AT(pteval_t, 1) << 57)
-#define PTE_PROT_NONE		(_AT(pteval_t, 1) << 58) /* only when !PTE_VALID */
+#define PTE_PROT_NONE		(_AT(pteval_t, 1) << 58) 
 
-/*
- * VMALLOC and SPARSEMEM_VMEMMAP ranges.
- */
 #define VMALLOC_START		(UL(0xffffffffffffffff) << VA_BITS)
 #define VMALLOC_END		(PAGE_OFFSET - UL(0x400000000) - SZ_64K)
 
@@ -52,12 +46,6 @@ extern void __pgd_error(const char *file, int line, unsigned long val);
 #endif
 #define pgd_ERROR(pgd)		__pgd_error(__FILE__, __LINE__, pgd_val(pgd))
 
-/*
- * The pgprot_* and protection_map entries will be fixed up at runtime to
- * include the cachable and bufferable bits based on memory policy, as well as
- * any architecture dependent bits like global/ASID and SMP shared mapping
- * bits.
- */
 #define _PAGE_DEFAULT		PTE_TYPE_PAGE | PTE_AF
 
 extern pgprot_t pgprot_default;
@@ -90,15 +78,14 @@ extern pgprot_t pgprot_default;
 #define __PAGE_COPY_EXEC	__pgprot(_PAGE_DEFAULT | PTE_USER | PTE_NG | PTE_PXN)
 #define __PAGE_READONLY		__pgprot(_PAGE_DEFAULT | PTE_USER | PTE_NG | PTE_PXN | PTE_UXN)
 #define __PAGE_READONLY_EXEC	__pgprot(_PAGE_DEFAULT | PTE_USER | PTE_NG | PTE_PXN)
-#define __PAGE_EXECONLY		__pgprot(_PAGE_DEFAULT | PTE_NG | PTE_PXN)
 
-#endif /* __ASSEMBLY__ */
+#endif 
 
 #define __P000  __PAGE_NONE
 #define __P001  __PAGE_READONLY
 #define __P010  __PAGE_COPY
 #define __P011  __PAGE_COPY
-#define __P100  __PAGE_EXECONLY
+#define __P100  __PAGE_READONLY_EXEC
 #define __P101  __PAGE_READONLY_EXEC
 #define __P110  __PAGE_COPY_EXEC
 #define __P111  __PAGE_COPY_EXEC
@@ -107,16 +94,12 @@ extern pgprot_t pgprot_default;
 #define __S001  __PAGE_READONLY
 #define __S010  __PAGE_SHARED
 #define __S011  __PAGE_SHARED
-#define __S100  __PAGE_EXECONLY
+#define __S100  __PAGE_READONLY_EXEC
 #define __S101  __PAGE_READONLY_EXEC
 #define __S110  __PAGE_SHARED_EXEC
 #define __S111  __PAGE_SHARED_EXEC
 
 #ifndef __ASSEMBLY__
-/*
- * ZERO_PAGE is a global shared page that is always zero: used
- * for zero-mapped memory areas etc..
- */
 extern struct page *empty_zero_page;
 #define ZERO_PAGE(vaddr)	(empty_zero_page)
 
@@ -134,9 +117,6 @@ extern struct page *empty_zero_page;
 #define pte_unmap(pte)			do { } while (0)
 #define pte_unmap_nested(pte)		do { } while (0)
 
-/*
- * The following only work if pte_present(). Undefined behaviour otherwise.
- */
 #define pte_present(pte)	(!!(pte_val(pte) & (PTE_VALID | PTE_PROT_NONE)))
 #define pte_dirty(pte)		(!!(pte_val(pte) & PTE_DIRTY))
 #define pte_young(pte)		(!!(pte_val(pte) & PTE_AF))
@@ -144,8 +124,6 @@ extern struct page *empty_zero_page;
 #define pte_write(pte)		(!!(pte_val(pte) & PTE_WRITE))
 #define pte_exec(pte)		(!(pte_val(pte) & PTE_UXN))
 
-#define pte_valid_ng(pte) \
-	((pte_val(pte) & (PTE_VALID | PTE_NG)) == (PTE_VALID | PTE_NG))
 #define pte_valid_user(pte) \
 	((pte_val(pte) & (PTE_VALID | PTE_USER)) == (PTE_VALID | PTE_USER))
 #define pte_valid_not_user(pte) \
@@ -209,10 +187,6 @@ static inline void set_pte(pte_t *ptep, pte_t pte)
 {
 	*ptep = pte;
 
-	/*
-	 * Only if the new pte is valid and kernel, otherwise TLB maintenance
-	 * or update_mmu_cache() have the necessary barriers.
-	 */
 	if (pte_valid_not_user(pte)) {
 		dsb(ishst);
 		isb();
@@ -224,7 +198,7 @@ extern void __sync_icache_dcache(pte_t pteval, unsigned long addr);
 static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
 			      pte_t *ptep, pte_t pte)
 {
-	if (pte_valid_ng(pte)) {
+	if (pte_valid_user(pte)) {
 		if (!pte_special(pte) && pte_exec(pte))
 			__sync_icache_dcache(pte, addr);
 		if (pte_dirty(pte) && pte_write(pte))
@@ -236,15 +210,9 @@ static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
 	set_pte(ptep, pte);
 }
 
-/*
- * Huge pte definitions.
- */
 #define pte_huge(pte)		(!(pte_val(pte) & PTE_TABLE_BIT))
 #define pte_mkhuge(pte)		(__pte(pte_val(pte) & ~PTE_TABLE_BIT))
 
-/*
- * Hugetlb definitions.
- */
 #define HUGE_MAX_HSTATE		2
 #define HPAGE_SHIFT		PMD_SHIFT
 #define HPAGE_SIZE		(_AC(1, UL) << HPAGE_SHIFT)
@@ -263,9 +231,6 @@ static inline pmd_t pte_pmd(pte_t pte)
 	return __pmd(pte_val(pte));
 }
 
-/*
- * THP definitions.
- */
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 #define pmd_trans_huge(pmd)	(pmd_val(pmd) && !(pmd_val(pmd) & PMD_TABLE_BIT))
@@ -299,9 +264,6 @@ static inline int has_transparent_hugepage(void)
 	return 1;
 }
 
-/*
- * Mark the prot value as uncacheable and unbufferable.
- */
 #define pgprot_noncached(prot) \
 	__pgprot_modify(prot, PTE_ATTRINDX_MASK, PTE_ATTRINDX(MT_DEVICE_nGnRnE) | PTE_PXN | PTE_UXN)
 #define pgprot_writecombine(prot) \
@@ -343,10 +305,6 @@ static inline pte_t *pmd_page_vaddr(pmd_t pmd)
 
 #define pmd_page(pmd)		pfn_to_page(__phys_to_pfn(pmd_val(pmd) & PHYS_MASK))
 
-/*
- * Conversion functions: convert a page and protection to a page entry,
- * and a page entry and page directory to the page they refer to.
- */
 #define mk_pte(page,prot)	pfn_pte(page_to_pfn(page),prot)
 
 #ifndef CONFIG_ARM64_64K_PAGES
@@ -372,17 +330,14 @@ static inline pmd_t *pud_page_vaddr(pud_t pud)
 	return __va(pud_val(pud) & PHYS_MASK & (s32)PAGE_MASK);
 }
 
-#endif	/* CONFIG_ARM64_64K_PAGES */
+#endif	
 
-/* to find an entry in a page-table-directory */
 #define pgd_index(addr)		(((addr) >> PGDIR_SHIFT) & (PTRS_PER_PGD - 1))
 
 #define pgd_offset(mm, addr)	((mm)->pgd+pgd_index(addr))
 
-/* to find an entry in a kernel page-table-directory */
 #define pgd_offset_k(addr)	pgd_offset(&init_mm, addr)
 
-/* Find an entry in the second-level page table.. */
 #ifndef CONFIG_ARM64_64K_PAGES
 #define pmd_index(addr)		(((addr) >> PMD_SHIFT) & (PTRS_PER_PMD - 1))
 static inline pmd_t *pmd_offset(pud_t *pud, unsigned long addr)
@@ -391,7 +346,6 @@ static inline pmd_t *pmd_offset(pud_t *pud, unsigned long addr)
 }
 #endif
 
-/* Find an entry in the third-level page table.. */
 #define pte_index(addr)		(((addr) >> PAGE_SHIFT) & (PTRS_PER_PTE - 1))
 
 static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
@@ -413,13 +367,6 @@ extern pgd_t idmap_pg_dir[PTRS_PER_PGD];
 #define SWAPPER_DIR_SIZE	(3 * PAGE_SIZE)
 #define IDMAP_DIR_SIZE		(2 * PAGE_SIZE)
 
-/*
- * Encode and decode a swap entry:
- *	bits 0-1:	present (must be zero)
- *	bit  2:		PTE_FILE
- *	bits 3-8:	swap type
- *	bits 9-57:	swap offset
- */
 #define __SWP_TYPE_SHIFT	3
 #define __SWP_TYPE_BITS		6
 #define __SWP_OFFSET_BITS	49
@@ -434,18 +381,8 @@ extern pgd_t idmap_pg_dir[PTRS_PER_PGD];
 #define __pte_to_swp_entry(pte)	((swp_entry_t) { pte_val(pte) })
 #define __swp_entry_to_pte(swp)	((pte_t) { (swp).val })
 
-/*
- * Ensure that there are not more swap files than can be encoded in the kernel
- * PTEs.
- */
 #define MAX_SWAPFILES_CHECK() BUILD_BUG_ON(MAX_SWAPFILES_SHIFT > __SWP_TYPE_BITS)
 
-/*
- * Encode and decode a file entry:
- *	bits 0-1:	present (must be zero)
- *	bit  2:		PTE_FILE
- *	bits 3-57:	file offset / PAGE_SIZE
- */
 #define pte_file(pte)		(pte_val(pte) & PTE_FILE)
 #define pte_to_pgoff(x)		(pte_val(x) >> 3)
 #define pgoff_to_pte(x)		__pte(((x) << 3) | PTE_FILE)
@@ -458,6 +395,6 @@ extern int kern_addr_valid(unsigned long addr);
 
 #define pgtable_cache_init() do { } while (0)
 
-#endif /* !__ASSEMBLY__ */
+#endif 
 
-#endif /* __ASM_PGTABLE_H */
+#endif 

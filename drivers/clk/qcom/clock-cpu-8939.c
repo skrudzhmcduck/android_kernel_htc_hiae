@@ -24,6 +24,7 @@
 #include <linux/msm-bus.h>
 #include <linux/delay.h>
 #include <linux/platform_device.h>
+#include <linux/pm_qos.h>
 #include <linux/regulator/consumer.h>
 #include <linux/of.h>
 #include <linux/clk/msm-clock-generic.h>
@@ -46,6 +47,14 @@ enum {
 
 const char *mux_names[] = { "c1", "c0", "cci"};
 
+struct cpu_clk_8939 {
+	u32 cpu_reg_mask;
+	cpumask_t cpumask;
+	bool hw_low_power_ctrl;
+	struct pm_qos_request req;
+	struct clk c;
+};
+
 static struct mux_div_clk a53ssmux_bc = {
 	.ops = &rcg_mux_div_ops,
 	.safe_freq = 400000000,
@@ -57,7 +66,6 @@ static struct mux_div_clk a53ssmux_bc = {
 	.c = {
 		.dbg_name = "a53ssmux_bc",
 		.ops = &clk_ops_mux_div_clk,
-		.vdd_class = &vdd_cpu_bc,
 		CLK_INIT(a53ssmux_bc.c),
 	},
 	.parents = (struct clk_src[8]) {},
@@ -77,7 +85,6 @@ static struct mux_div_clk a53ssmux_lc = {
 	.c = {
 		.dbg_name = "a53ssmux_lc",
 		.ops = &clk_ops_mux_div_clk,
-		.vdd_class = &vdd_cpu_lc,
 		CLK_INIT(a53ssmux_lc.c),
 	},
 	.parents = (struct clk_src[8]) {},
@@ -97,7 +104,6 @@ static struct mux_div_clk a53ssmux_cci = {
 	.c = {
 		.dbg_name = "a53ssmux_cci",
 		.ops = &clk_ops_mux_div_clk,
-		.vdd_class = &vdd_cpu_cci,
 		CLK_INIT(a53ssmux_cci.c),
 	},
 	.parents = (struct clk_src[8]) {},
@@ -106,24 +112,125 @@ static struct mux_div_clk a53ssmux_cci = {
 	.src_shift = 8,
 };
 
+static void do_nothing(void *unused) { }
+#define CPU_LATENCY_NO_L2_PC_US (250)
+
+static inline struct cpu_clk_8939 *to_cpu_clk_8939(struct clk *c)
+{
+	return container_of(c, struct cpu_clk_8939, c);
+}
+
+static enum handoff cpu_clk_8939_handoff(struct clk *c)
+{
+	c->rate = clk_get_rate(c->parent);
+	return HANDOFF_DISABLED_CLK;
+}
+
+static long cpu_clk_8939_round_rate(struct clk *c, unsigned long rate)
+{
+	return clk_round_rate(c->parent, rate);
+}
+
+static int cpu_clk_8939_set_rate(struct clk *c, unsigned long rate)
+{
+	int ret = 0;
+	struct cpu_clk_8939 *cpuclk = to_cpu_clk_8939(c);
+	bool hw_low_power_ctrl = cpuclk->hw_low_power_ctrl;
+
+	if (hw_low_power_ctrl) {
+		memset(&cpuclk->req, 0, sizeof(cpuclk->req));
+		cpumask_copy(&cpuclk->req.cpus_affine,
+				(const struct cpumask *)&cpuclk->cpumask);
+		cpuclk->req.type = PM_QOS_REQ_AFFINE_CORES;
+		pm_qos_add_request(&cpuclk->req, PM_QOS_CPU_DMA_LATENCY,
+				CPU_LATENCY_NO_L2_PC_US);
+		smp_call_function_any(&cpuclk->cpumask, do_nothing,
+				NULL, 1);
+	}
+
+	ret = clk_set_rate(c->parent, rate);
+
+	if (hw_low_power_ctrl)
+		pm_qos_remove_request(&cpuclk->req);
+
+	return ret;
+}
+
+static struct clk_ops clk_ops_cpu = {
+	.set_rate = cpu_clk_8939_set_rate,
+	.round_rate = cpu_clk_8939_round_rate,
+	.handoff = cpu_clk_8939_handoff,
+};
+
+static struct cpu_clk_8939 a53_bc_clk = {
+	.cpu_reg_mask = 0x3,
+	.c = {
+		.parent = &a53ssmux_bc.c,
+		.ops = &clk_ops_cpu,
+		.vdd_class = &vdd_cpu_bc,
+		.dbg_name = "a53_bc_clk",
+		CLK_INIT(a53_bc_clk.c),
+	},
+};
+
+static struct cpu_clk_8939 a53_lc_clk = {
+	.cpu_reg_mask = 0x103,
+	.c = {
+		.parent = &a53ssmux_lc.c,
+		.ops = &clk_ops_cpu,
+		.vdd_class = &vdd_cpu_lc,
+		.dbg_name = "a53_lc_clk",
+		CLK_INIT(a53_lc_clk.c),
+	},
+};
+
+static struct cpu_clk_8939 cci_clk = {
+	.c = {
+		.parent = &a53ssmux_cci.c,
+		.ops = &clk_ops_cpu,
+		.vdd_class = &vdd_cpu_cci,
+		.dbg_name = "cci_clk",
+		CLK_INIT(cci_clk.c),
+	},
+};
+
 static struct clk_lookup cpu_clocks_8939[] = {
 	CLK_LIST(a53ssmux_lc),
 	CLK_LIST(a53ssmux_bc),
 	CLK_LIST(a53ssmux_cci),
+	CLK_LIST(a53_bc_clk),
+	CLK_LIST(a53_lc_clk),
+	CLK_LIST(cci_clk),
 };
 
 static struct mux_div_clk *a53ssmux[] = {&a53ssmux_bc,
 						&a53ssmux_lc, &a53ssmux_cci};
+static struct cpu_clk_8939 *cpuclk[] = { &a53_bc_clk, &a53_lc_clk, &cci_clk};
 
-#if defined(CONFIG_HTC_DEBUG_FOOTPRINT)
+static struct clk *logical_cpu_to_clk(int cpu)
+{
+	struct device_node *cpu_node = of_get_cpu_node(cpu, NULL);
+	u32 reg;
+
+	if (cpu_node && !of_property_read_u32(cpu_node, "reg", &reg)) {
+		if ((reg | a53_bc_clk.cpu_reg_mask) == a53_bc_clk.cpu_reg_mask)
+			return &a53_lc_clk.c;
+		if ((reg | a53_lc_clk.cpu_reg_mask) == a53_lc_clk.cpu_reg_mask)
+			return &a53_bc_clk.c;
+	}
+
+	return NULL;
+}
+
+#if (defined(CONFIG_HTC_DEBUG_FOOTPRINT) && !defined(CONFIG_HTC_DEBUG_MSM8976))
 int clk_get_cpu_idx(struct clk *c)
 {
 	
-	if (c == &a53ssmux_bc.c)
+	if (c == &a53ssmux_bc.c || c == &a53_bc_clk.c)
 		return 0;
 
 	
-	if (c == &a53ssmux_lc.c)
+	if (c == &a53ssmux_lc.c || c == &a53_lc_clk.c)
 		return 4;
 
 	return -1;
@@ -131,7 +238,7 @@ int clk_get_cpu_idx(struct clk *c)
 
 int clk_get_l2_idx(struct clk *c)
 {
-	if (c == &a53ssmux_cci.c)
+	if (c == &a53ssmux_cci.c || c == &cci_clk.c)
 		return 0;
 
 	return -1;
@@ -380,7 +487,7 @@ static int cpu_parse_devicetree(struct platform_device *pdev, int mux_id)
 			dev_err(&pdev->dev, "unable to get regulator\n");
 		return PTR_ERR(regulator);
 	}
-	a53ssmux[mux_id]->c.vdd_class->regulator[0] = regulator;
+	cpuclk[mux_id]->c.vdd_class->regulator[0] = regulator;
 
 	rc = of_get_clk_src(pdev, a53ssmux[mux_id]->parents, mux_id);
 	if (IS_ERR_VALUE(rc))
@@ -414,15 +521,15 @@ static int clock_8939_pm_event(struct notifier_block *this,
 	switch (event) {
 	case PM_POST_HIBERNATION:
 	case PM_POST_SUSPEND:
-		clk_unprepare(&a53ssmux_lc.c);
-		clk_unprepare(&a53ssmux_bc.c);
-		clk_unprepare(&a53ssmux_cci.c);
+		clk_unprepare(&a53_lc_clk.c);
+		clk_unprepare(&a53_bc_clk.c);
+		clk_unprepare(&cci_clk.c);
 		break;
 	case PM_HIBERNATION_PREPARE:
 	case PM_SUSPEND_PREPARE:
-		clk_prepare(&a53ssmux_lc.c);
-		clk_prepare(&a53ssmux_bc.c);
-		clk_prepare(&a53ssmux_cci.c);
+		clk_prepare(&a53_lc_clk.c);
+		clk_prepare(&a53_bc_clk.c);
+		clk_prepare(&cci_clk.c);
 		break;
 	default:
 		break;
@@ -450,7 +557,7 @@ static int clock_a53_probe(struct platform_device *pdev)
 					"qcom,speed%d-bin-v%d-%s",
 					speed_bin, version, mux_names[mux_id]);
 
-		rc = of_get_fmax_vdd_class(pdev, &a53ssmux[mux_id]->c,
+		rc = of_get_fmax_vdd_class(pdev, &cpuclk[mux_id]->c,
 								prop_name);
 		if (rc) {
 			
@@ -459,7 +566,7 @@ static int clock_a53_probe(struct platform_device *pdev)
 
 			snprintf(prop_name, ARRAY_SIZE(prop_name),
 				"qcom,speed0-bin-v0-%s", mux_names[mux_id]);
-			rc = of_get_fmax_vdd_class(pdev, &a53ssmux[mux_id]->c,
+			rc = of_get_fmax_vdd_class(pdev, &cpuclk[mux_id]->c,
 								prop_name);
 			if (rc) {
 				dev_err(&pdev->dev,
@@ -477,24 +584,34 @@ static int clock_a53_probe(struct platform_device *pdev)
 		return rc;
 	}
 
-	rate = clk_get_rate(&a53ssmux[A53SS_MUX_CCI]->c);
-	clk_set_rate(&a53ssmux[A53SS_MUX_CCI]->c, rate);
+	rate = clk_get_rate(&cci_clk.c);
+	clk_set_rate(&cci_clk.c, rate);
 
 	for (mux_id = 0; mux_id < A53SS_MUX_CCI; mux_id++) {
 		
 		config_pll(mux_id);
 	}
-
 	get_online_cpus();
 	for_each_online_cpu(cpu) {
-		WARN(clk_prepare_enable(&a53ssmux[cpu/4]->c),
+		WARN(clk_prepare_enable(&cpuclk[cpu/4]->c),
 				"Unable to turn on CPU clock");
-		clk_prepare_enable(&a53ssmux_cci.c);
+		clk_prepare_enable(&cci_clk.c);
 	}
 	put_online_cpus();
-	register_pm_notifier(&clock_8939_pm_notifier);
 
 	cpu_clock_8939_dev = pdev;
+
+	for_each_possible_cpu(cpu) {
+		if (logical_cpu_to_clk(cpu) == &a53_bc_clk.c)
+			cpumask_set_cpu(cpu, &a53_bc_clk.cpumask);
+		if (logical_cpu_to_clk(cpu) == &a53_lc_clk.c)
+			cpumask_set_cpu(cpu, &a53_lc_clk.cpumask);
+	}
+
+	a53_lc_clk.hw_low_power_ctrl = true;
+	a53_bc_clk.hw_low_power_ctrl = true;
+
+	register_pm_notifier(&clock_8939_pm_notifier);
 
 	return 0;
 }

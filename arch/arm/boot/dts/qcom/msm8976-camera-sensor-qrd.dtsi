@@ -266,8 +266,8 @@
 			"MCAM2_RESET",
 			"MCAM2_STANDBY";
 		qcom,sensor-position = <1>;
-		qcom,sensor-mode = <0>;
-		qcom,cci-master = <0>;
+		qcom,sensor-mode = <1>;
+		qcom,cci-master = <1>;
 		status = "ok";
 		clocks = <&clock_gcc clk_mclk1_clk_src>,
 				<&clock_gcc clk_gcc_camss_mclk1_clk>;
@@ -356,7 +356,7 @@
 		qcom,csi-lane-mask = <0x18>;
 		qcom,sensor-position = <0x100>;
 		qcom,sensor-mode = <1>;
-		qcom,cci-master = <0>;
+		qcom,cci-master = <1>;
 		clocks = <&clock_gcc clk_mclk1_clk_src>,
 			<&clock_gcc clk_gcc_camss_mclk1_clk>;
 		clock-names = "cam_src_clk", "cam_clk";

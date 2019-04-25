@@ -47,12 +47,12 @@
 			};
 		 };
 
-
                 htc_smlog_mem: htc_smlog_region@0 {
                         linux,reserve-contiguous-region;
-                        reg = <0 0x82800000 0 0x01400000>; /* 20 MB */
+                        reg = <0 0x8E400000 0 0x01400000>; /* 20 MB */
                         label = "htc_smlog_mem";
                 };
+
 	};
 };
 

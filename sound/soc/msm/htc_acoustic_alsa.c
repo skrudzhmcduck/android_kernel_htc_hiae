@@ -22,8 +22,9 @@
 #include <linux/slab.h>
 #include <linux/switch.h>
 #include <sound/htc_acoustic_alsa.h>
+#ifdef CONFIG_HTC_HEADSET_MGR
 #include <linux/htc_headset_mgr.h>
-
+#endif
 struct device_info {
 	unsigned pcb_id;
 	unsigned sku_id;
@@ -54,14 +55,17 @@ extern struct wake_lock compr_lpa_q6_cb_wakelock;
 static struct wake_lock htc_acoustic_wakelock;
 static struct wake_lock htc_acoustic_wakelock_timeout;
 static struct wake_lock htc_acoustic_dummy_wakelock;
+static struct wake_lock htc_acoustic_tfa_wakelock;
+#ifdef CONFIG_HTC_HEADSET_MGR
 static struct hs_notify_t hs_plug_nt[HS_N_MAX] = {{0,NULL,NULL}};
 static DEFINE_MUTEX(hs_nt_lock);
-
+#endif
 struct avcs_ctl {
        atomic_t ref_cnt;
        void *apr;
 };
 static struct avcs_ctl this_avcs;
+static void (*htc_spk_version)(unsigned char*) = NULL;
 
 static int hs_amp_open(struct inode *inode, struct file *file);
 static int hs_amp_release(struct inode *inode, struct file *file);
@@ -79,6 +83,21 @@ static long aud_ftm_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 
 void aud_ftm_func_register(struct aud_ftm_btpcm_func_t *funcs);
 
+struct aud_hw_component_flag {
+	char *hw_s;
+	uint32_t flag;
+} component_to_flag_array[] = {
+	{"TPA6185", HTC_AUDIO_TPA6185},
+	{"RT5501", HTC_AUDIO_RT5501},
+	{"RT5506", HTC_AUDIO_RT5501},
+	{"RT5507", HTC_AUDIO_RT5501},
+	{"RT5503", HTC_AUDIO_RT5503},
+	{"TFA9887", HTC_AUDIO_TFA9887},
+	{"TFA9887L", HTC_AUDIO_TFA9887L},
+	{"TFA9895", HTC_AUDIO_TFA9887},
+	{"TFA9895L", HTC_AUDIO_TFA9887L},
+	{"TFA9888", HTC_AUDIO_TFA9888},
+};
 
 static struct aud_ftm_btpcm_func_t aud_ftm_btpcm_func = {
 	.init = 0,
@@ -151,6 +170,10 @@ struct hw_component HTC_AUD_HW_LIST[AUD_HW_NUM] = {
 };
 EXPORT_SYMBOL(HTC_AUD_HW_LIST);
 
+void htc_acoustic_register_spk_version(void (*spk_func)(unsigned char*)) {
+	htc_spk_version = spk_func;
+}
+
 #if 0
 extern unsigned int system_rev;
 #endif
@@ -199,7 +222,7 @@ void htc_acoustic_register_hs_amp(int (*aud_hs_amp_f)(int, int), struct file_ope
 	hs_amp.fops = ops;
 	mutex_unlock(&hs_amp_lock);
 }
-
+#ifdef CONFIG_HTC_HEADSET_MGR
 void htc_acoustic_register_hs_notify(enum HS_NOTIFY_TYPE type, struct hs_notify_t *notify)
 {
 	if(notify == NULL)
@@ -215,7 +238,7 @@ void htc_acoustic_register_hs_notify(enum HS_NOTIFY_TYPE type, struct hs_notify_
 	}
 	mutex_unlock(&hs_nt_lock);
 }
-
+#endif
 void htc_acoustic_register_ops(struct acoustic_ops *ops)
 {
         D("acoustic_register_ops \n");
@@ -243,6 +266,22 @@ int htc_acoustic_query_feature(enum HTC_FEATURE feature)
 	};
 	mutex_unlock(&api_lock);
 	return ret;
+}
+
+uint32_t htc_aud_component_to_flag(const char* hw_s)
+{
+	int i = 0;
+
+	if(!hw_s)
+		return 0;
+
+	for(i=0; i<ARRAY_SIZE(component_to_flag_array); i++) {
+		if(component_to_flag_array[i].hw_s)
+			if(!strcmp(component_to_flag_array[i].hw_s, hw_s))
+				return component_to_flag_array[i].flag;
+	}
+
+	return 0;
 }
 
 static int acoustic_open(struct inode *inode, struct file *file)
@@ -463,6 +502,28 @@ acoustic_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		wake_lock_timeout(&htc_acoustic_dummy_wakelock, 5*HZ);
 		break;
 	}
+
+	case ACOUSTIC_TFA_CONTROL_WAKELOCK: {
+		if(sizeof(s32_value) <= us32_size) {
+			memcpy((void*)&s32_value, (void*)buf, sizeof(s32_value));
+			D("%s %d: ACOUSTIC_TFA_CONTROL_WAKELOCK %#x\n", __func__, __LINE__, s32_value);
+			if (s32_value < -1 || s32_value > 1) {
+				rc = -EINVAL;
+				break;
+			}
+			if (s32_value == 1) {
+				D("%s %d: hold wakelock for tfa extra mi2s\n", __func__, __LINE__);
+				wake_lock_timeout(&htc_acoustic_tfa_wakelock, 15*HZ);
+			} else {
+				D("%s %d: release wakelock for tfa extra mi2s\n", __func__, __LINE__);
+				wake_unlock(&htc_acoustic_tfa_wakelock);
+			}
+		} else {
+			E("%s %d: ACOUSTIC_TFA_CONTROL_WAKELOCK error.\n", __func__, __LINE__);
+			rc = -EINVAL;
+		}
+		break;
+	}
 	case ACOUSTIC_UPDATE_LISTEN_NOTIFICATION: {
 		if(sizeof(s32_value) <= us32_size) {
 			memcpy((void*)&s32_value, (void*)buf, sizeof(s32_value));
@@ -566,6 +627,14 @@ acoustic_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			E("%s %d: ACOUSTIC_KILL_PID error.\n", __func__, __LINE__);
 			rc = -EINVAL;
 		}
+		break;
+	}
+	case  ACOUSTIC_GET_TFA_VER: {
+		unsigned char version[2] = {0x00,0x00};
+		if(htc_spk_version) {
+			htc_spk_version(version);
+		}
+		memcpy((void*)buf, (void*)version, sizeof(version));
 		break;
 	}
 	case  ACOUSTIC_ADSP_CMD: {
@@ -733,7 +802,7 @@ void htc_amp_power_enable(bool enable)
 	if(the_amp_power_ops && the_amp_power_ops->set_amp_power_enable)
 		the_amp_power_ops->set_amp_power_enable(enable);
 }
-
+#ifdef CONFIG_HTC_HEADSET_MGR
 static int htc_acoustic_hsnotify(int on)
 {
 	int i = 0;
@@ -746,7 +815,7 @@ static int htc_acoustic_hsnotify(int on)
 
 	return 0;
 }
-
+#endif
 static int aud_ftm_sim_gpio_config(void *user_data, enum AUD_FTM_BTPCM_MODE mode)
 {
 	return 0;
@@ -890,7 +959,7 @@ static ssize_t aud_ftm_read(struct file *file, char __user *string, size_t size,
 	mutex_lock(&aud_ftm_lock);
 	ret = process_ftm_read(&gpio_values);
 	if (ret == 0) {
-		sprintf(state, "%x", gpio_values);
+		snprintf(state, sizeof(state)-1, "%x", gpio_values);
 		ret = copy_to_user(string, state, 1);
 	}
 	mutex_unlock(&aud_ftm_lock);
@@ -1020,12 +1089,14 @@ static struct miscdevice acoustic_misc = {
 static int __init acoustic_init(void)
 {
 	int ret = 0;
+#ifdef CONFIG_HTC_HEADSET_MGR
 	struct headset_notifier notifier;
-
+#endif
 	ret = misc_register(&acoustic_misc);
 	wake_lock_init(&htc_acoustic_wakelock, WAKE_LOCK_SUSPEND, "htc_acoustic");
 	wake_lock_init(&htc_acoustic_wakelock_timeout, WAKE_LOCK_SUSPEND, "htc_acoustic_timeout");
 	wake_lock_init(&htc_acoustic_dummy_wakelock, WAKE_LOCK_SUSPEND, "htc_acoustic_dummy");
+	wake_lock_init(&htc_acoustic_tfa_wakelock, WAKE_LOCK_SUSPEND, "htc_acoustic_tfa");
 
 	if (ret < 0) {
 		pr_err("failed to register misc device!\n");
@@ -1080,10 +1151,11 @@ static int __init acoustic_init(void)
 		return ret;
 	}
 
+#ifdef CONFIG_HTC_HEADSET_MGR
 	notifier.id = HEADSET_REG_HS_INSERT;
 	notifier.func = htc_acoustic_hsnotify;
 	headset_notifier_register(&notifier);
-
+#endif
 	return 0;
 }
 

@@ -59,7 +59,7 @@ static inline void arch_timer_reg_write_cp15(int access, int reg, u32 val)
 
 static inline u32 arch_timer_reg_read_cp15(int access, int reg)
 {
-	u32 val;
+	u32 val = 0;
 
 	if (access == ARCH_TIMER_PHYS_ACCESS) {
 		switch (reg) {
@@ -113,7 +113,7 @@ static inline void arch_timer_evtstrm_enable(int divider)
 {
 	u32 cntkctl = arch_timer_get_cntkctl();
 	cntkctl &= ~ARCH_TIMER_EVT_TRIGGER_MASK;
-	/* Set the divider and enable virtual event stream */
+	
 	cntkctl |= (divider << ARCH_TIMER_EVT_TRIGGER_SHIFT)
 			| ARCH_TIMER_VIRT_EVT_EN;
 	arch_timer_set_cntkctl(cntkctl);

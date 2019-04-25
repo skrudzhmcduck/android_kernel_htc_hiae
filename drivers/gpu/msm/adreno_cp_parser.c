@@ -27,13 +27,19 @@ struct set_draw_state {
 	uint64_t cmd_stream_dwords;
 };
 
+/* List of variables used when parsing an IB */
 struct ib_parser_variables {
-	
+	/* List of registers containing addresses and their sizes */
 	unsigned int cp_addr_regs[ADRENO_CP_ADDR_MAX];
-	
+	/* 32 groups of command streams in set draw state packets */
 	struct set_draw_state set_draw_groups[NUM_SET_DRAW_GROUPS];
 };
 
+/*
+ * Used for locating shader objects. This array holds the unit size of shader
+ * objects based on type and block of shader. The type can be 0 or 1 hence there
+ * are 2 columns and block can be 0-7 hence 7 rows.
+ */
 static int load_state_unit_sizes[7][2] = {
 	{ 2, 4 },
 	{ 0, 1 },
@@ -62,6 +68,13 @@ static int ib_parse_type7_set_draw_state(struct kgsl_device *device,
 	struct kgsl_process_private *process,
 	struct adreno_ib_object_list *ib_obj_list);
 
+/*
+ * adreno_ib_merge_range() - Increases the address range tracked by an ib
+ * object
+ * @ib_obj: The ib object
+ * @gpuaddr: The start address which is to be merged
+ * @size: Size of the merging address
+ */
 static void adreno_ib_merge_range(struct adreno_ib_object *ib_obj,
 		uint64_t gpuaddr, uint64_t size)
 {
@@ -75,6 +88,16 @@ static void adreno_ib_merge_range(struct adreno_ib_object *ib_obj,
 		ib_obj->size = addr_end1 - ib_obj->gpuaddr;
 }
 
+/*
+ * adreno_ib_check_overlap() - Checks if an address range overlap
+ * @gpuaddr: The start address range to check for overlap
+ * @size: Size of the address range
+ * @type: The type of address range
+ * @ib_obj_list: The list of address ranges to check for overlap
+ *
+ * Checks if an address range overlaps with a list of address ranges
+ * Returns the entry from list which overlaps else NULL
+ */
 static struct adreno_ib_object *adreno_ib_check_overlap(uint64_t gpuaddr,
 		uint64_t size, int type,
 		struct adreno_ib_object_list *ib_obj_list)
@@ -87,12 +110,26 @@ static struct adreno_ib_object *adreno_ib_check_overlap(uint64_t gpuaddr,
 		if ((type == ib_obj->snapshot_obj_type) &&
 			kgsl_addr_range_overlap(ib_obj->gpuaddr, ib_obj->size,
 			gpuaddr, size))
-			
+			/* regions overlap */
 			return ib_obj;
 	}
 	return NULL;
 }
 
+/*
+ * adreno_ib_add_range() - Add a gpuaddress range to list
+ * @process: Process in which the gpuaddress is mapped
+ * @size: Size of the address range in concern
+ * @type: The type of address range
+ * @ib_obj_list: List of the address ranges in which the given range is to be
+ * added
+ *
+ * Add a gpuaddress range as an ib object to a given list after checking if it
+ * overlaps with another entry on the list. If it conflicts then change the
+ * existing entry to incorporate this range
+ *
+ * Returns 0 on success else error code
+ */
 static int adreno_ib_add_range(struct kgsl_process_private *process,
 				uint64_t gpuaddr,
 				uint64_t size, int type,
@@ -106,6 +143,11 @@ static int adreno_ib_add_range(struct kgsl_process_private *process,
 
 	entry = kgsl_sharedmem_find_region(process, gpuaddr, size);
 	if (!entry)
+		/*
+		 * Do not fail if gpuaddr not found, we can continue
+		 * to search for other objects even if few objects are
+		 * not found
+		 */
 		return 0;
 
 	if (!size) {
@@ -125,6 +167,14 @@ static int adreno_ib_add_range(struct kgsl_process_private *process,
 	return 0;
 }
 
+/*
+ * ib_save_mip_addresses() - Find mip addresses
+ * @pkt: Pointer to the packet in IB
+ * @process: The process in which IB is mapped
+ * @ib_obj_list: List in which any objects found are added
+ *
+ * Returns 0 on success else error code
+ */
 static int ib_save_mip_addresses(unsigned int *pkt,
 		struct kgsl_process_private *process,
 		struct adreno_ib_object_list *ib_obj_list)
@@ -169,6 +219,17 @@ static int ib_save_mip_addresses(unsigned int *pkt,
 	return ret;
 }
 
+/*
+ * ib_parse_load_state() - Parse load state packet
+ * @pkt: Pointer to the packet in IB
+ * @process: The pagetable in which the IB is mapped
+ * @ib_obj_list: List in which any objects found are added
+ * @ib_parse_vars: VAriable list that store temporary addressses
+ *
+ * Parse load state packet found in an IB and add any memory object found to
+ * a list
+ * Returns 0 on success else error code
+ */
 static int ib_parse_load_state(unsigned int *pkt,
 	struct kgsl_process_private *process,
 	struct adreno_ib_object_list *ib_obj_list,
@@ -177,10 +238,23 @@ static int ib_parse_load_state(unsigned int *pkt,
 	int ret = 0;
 	int i;
 
+	/*
+	 * The object here is to find indirect shaders i.e - shaders loaded from
+	 * GPU memory instead of directly in the command.  These should be added
+	 * to the list of memory objects to dump. So look at the load state
+	 * if the block is indirect (source = 4). If so then add the memory
+	 * address to the list.  The size of the object differs depending on the
+	 * type per the load_state_unit_sizes array above.
+	 */
 
 	if (type3_pkt_size(pkt[0]) < 2)
 		return 0;
 
+	/*
+	 * Anything from 3rd ordinal onwards of packet can be a memory object,
+	 * no need to be fancy about parsing it, just save it if it looks
+	 * like memory
+	 */
 	for (i = 0; i <= (type3_pkt_size(pkt[0]) - 2); i++) {
 		ret |= adreno_ib_add_range(process, pkt[2 + i] & 0xFFFFFFFC, 0,
 				SNAPSHOT_GPU_OBJECT_GENERIC,
@@ -188,12 +262,16 @@ static int ib_parse_load_state(unsigned int *pkt,
 		if (ret)
 			break;
 	}
-	
+	/* get the mip addresses */
 	if (!ret)
 		ret = ib_save_mip_addresses(pkt, process, ib_obj_list);
 	return ret;
 }
 
+/*
+ * This opcode sets the base addresses for the visibilty stream buffer and the
+ * visiblity stream size buffer.
+ */
 
 static int ib_parse_set_bin_data(unsigned int *pkt,
 	struct kgsl_process_private *process,
@@ -205,13 +283,13 @@ static int ib_parse_set_bin_data(unsigned int *pkt,
 	if (type3_pkt_size(pkt[0]) < 2)
 		return 0;
 
-	
+	/* Visiblity stream buffer */
 	ret = adreno_ib_add_range(process, pkt[1], 0,
 		SNAPSHOT_GPU_OBJECT_GENERIC, ib_obj_list);
 	if (ret)
 		return ret;
 
-	
+	/* visiblity stream size buffer (fixed size 8 dwords) */
 	ret = adreno_ib_add_range(process, pkt[2], 0,
 		SNAPSHOT_GPU_OBJECT_GENERIC, ib_obj_list);
 
@@ -242,6 +320,16 @@ static int ib_parse_mem_write(unsigned int *pkt,
 		SNAPSHOT_GPU_OBJECT_GENERIC, ib_obj_list);
 }
 
+/*
+ * ib_add_type0_entries() - Add memory objects to list
+ * @device: The device on which the IB will execute
+ * @process: The process in which IB is mapped
+ * @ib_obj_list: The list of gpu objects
+ * @ib_parse_vars: addresses ranges found in type0 packets
+ *
+ * Add memory objects to given list that are found in type0 packets
+ * Returns 0 on success else 0
+ */
 static int ib_add_type0_entries(struct kgsl_device *device,
 	struct kgsl_process_private *process,
 	struct adreno_ib_object_list *ib_obj_list,
@@ -252,7 +340,7 @@ static int ib_add_type0_entries(struct kgsl_device *device,
 	int i;
 	int vfd_end;
 	unsigned int mask;
-	
+	/* First up the visiblity stream buffer */
 	if (adreno_is_a4xx(adreno_dev))
 		mask = 0xFFFFFFFC;
 	else
@@ -310,6 +398,12 @@ static int ib_add_type0_entries(struct kgsl_device *device,
 	}
 	return ret;
 }
+/*
+ * The DRAW_INDX opcode sends a draw initator which starts a draw operation in
+ * the GPU, so this is the point where all the registers and buffers become
+ * "valid".  The DRAW_INDX may also have an index buffer pointer that should be
+ * frozen with the others
+ */
 
 static int ib_parse_draw_indx(struct kgsl_device *device, unsigned int *pkt,
 	struct kgsl_process_private *process,
@@ -370,11 +464,15 @@ static int ib_parse_draw_indx(struct kgsl_device *device, unsigned int *pkt,
 
 	if (ret)
 		return ret;
+	/*
+	 * All of the type0 writes are valid at a draw initiator, so freeze
+	 * the various buffers that we are tracking
+	 */
 	ret = ib_add_type0_entries(device, process, ib_obj_list,
 				ib_parse_vars);
 	if (ret)
 		return ret;
-	
+	/* Process set draw state command streams if any */
 	for (i = 0; i < NUM_SET_DRAW_GROUPS; i++) {
 		if (!ib_parse_vars->set_draw_groups[i].cmd_stream_dwords)
 			continue;
@@ -389,6 +487,10 @@ static int ib_parse_draw_indx(struct kgsl_device *device, unsigned int *pkt,
 	return ret;
 }
 
+/*
+ * Parse all the type7 opcode packets that may contain important information,
+ * such as additional GPU buffers to grab or a draw initator
+ */
 
 static int ib_parse_type7(struct kgsl_device *device, unsigned int *ptr,
 	struct kgsl_process_private *process,
@@ -406,6 +508,10 @@ static int ib_parse_type7(struct kgsl_device *device, unsigned int *ptr,
 	return 0;
 }
 
+/*
+ * Parse all the type3 opcode packets that may contain important information,
+ * such as additional GPU buffers to grab or a draw initator
+ */
 
 static int ib_parse_type3(struct kgsl_device *device, unsigned int *ptr,
 	struct kgsl_process_private *process,
@@ -459,7 +565,7 @@ static int ib_parse_type0(struct kgsl_device *device, unsigned int *ptr,
 	int ret = 0;
 
 	for (i = 0; i < size; i++, offset++) {
-		
+		/* Visiblity stream buffer */
 		if (offset >= adreno_cp_parser_getreg(adreno_dev,
 				ADRENO_CP_ADDR_VSC_PIPE_DATA_ADDRESS_0) &&
 			offset <= adreno_cp_parser_getreg(adreno_dev,
@@ -552,11 +658,23 @@ static int ib_parse_type7_set_draw_state(struct kgsl_device *device,
 	uint64_t cmd_stream_dwords;
 	uint64_t cmd_stream_addr;
 
+	/*
+	 * size is the size of the packet that does not include the DWORD
+	 * for the packet header, we only want to loop here through the
+	 * packet parameters from ptr[1] till ptr[size] where ptr[0] is the
+	 * packet header. In each loop we look at 3 DWORDS hence increment
+	 * loop counter by 3 always
+	 */
 	for (i = 1; i <= size; i += 3) {
 		grp_id = (ptr[i] & 0x1F000000) >> 24;
-		
+		/* take action based on flags */
 		flags = (ptr[i] & 0x000F0000) >> 16;
 
+		/*
+		 * dirty flag or no flags both mean we need to load it for
+		 * next draw. No flags is used when the group is activated
+		 * or initialized for the first time in the IB
+		 */
 		if (flags & 0x1 || !flags) {
 			cmd_stream_dwords = ptr[i] & 0x0000FFFF;
 			cmd_stream_addr = ptr[i + 2];
@@ -570,7 +688,7 @@ static int ib_parse_type7_set_draw_state(struct kgsl_device *device,
 				break;
 			continue;
 		}
-		
+		/* load immediate */
 		if (flags & 0x8) {
 			uint64_t gpuaddr = ptr[i + 2];
 			gpuaddr = gpuaddr << 32 | ptr[i + 1];
@@ -597,11 +715,18 @@ static int ib_parse_set_draw_state(struct kgsl_device *device,
 	int ret = 0;
 	int flags;
 
+	/*
+	 * size is the size of the packet that does not include the DWORD
+	 * for the packet header, we only want to loop here through the
+	 * packet parameters from ptr[1] till ptr[size] where ptr[0] is the
+	 * packet header. In each loop we look at 2 DWORDS hence increment
+	 * loop counter by 2 always
+	 */
 	for (i = 1; i <= size; i += 2) {
 		grp_id = (ptr[i] & 0x1F000000) >> 24;
-		
+		/* take action based on flags */
 		flags = (ptr[i] & 0x000F0000) >> 16;
-		
+		/* Disable all groups */
 		if (flags & 0x4) {
 			int j;
 			for (j = 0; j < NUM_SET_DRAW_GROUPS; j++)
@@ -609,12 +734,17 @@ static int ib_parse_set_draw_state(struct kgsl_device *device,
 					cmd_stream_dwords = 0;
 			continue;
 		}
-		
+		/* disable flag */
 		if (flags & 0x2) {
 			ib_parse_vars->set_draw_groups[grp_id].
 						cmd_stream_dwords = 0;
 			continue;
 		}
+		/*
+		 * dirty flag or no flags both mean we need to load it for
+		 * next draw. No flags is used when the group is activated
+		 * or initialized for the first time in the IB
+		 */
 		if (flags & 0x1 || !flags) {
 			ib_parse_vars->set_draw_groups[grp_id].
 				cmd_stream_dwords = ptr[i] & 0x0000FFFF;
@@ -622,7 +752,7 @@ static int ib_parse_set_draw_state(struct kgsl_device *device,
 				cmd_stream_addr = ptr[i + 1];
 			continue;
 		}
-		
+		/* load immediate */
 		if (flags & 0x8) {
 			ret = adreno_ib_find_objs(device, process,
 				ptr[i + 1], (ptr[i] & 0x0000FFFF),
@@ -635,6 +765,18 @@ static int ib_parse_set_draw_state(struct kgsl_device *device,
 	return ret;
 }
 
+/*
+ * adreno_cp_parse_ib2() - Wrapper function around IB2 parsing
+ * @device: Device pointer
+ * @process: Process in which the IB is allocated
+ * @gpuaddr: IB2 gpuaddr
+ * @dwords: IB2 size in dwords
+ * @ib_obj_list: List of objects found in IB
+ * @ib_level: The level from which function is called, either from IB1 or IB2
+ *
+ * Function does some checks to ensure that IB2 parsing is called from IB1
+ * and then calls the function to find objects in IB2.
+ */
 static int adreno_cp_parse_ib2(struct kgsl_device *device,
 			struct kgsl_process_private *process,
 			uint64_t gpuaddr, uint64_t dwords,
@@ -643,8 +785,16 @@ static int adreno_cp_parse_ib2(struct kgsl_device *device,
 {
 	struct adreno_ib_object *ib_obj = NULL;
 	int i;
+	/*
+	 * We can only expect an IB2 in IB1, if we are
+	 * already processing an IB2 then return error
+	 */
 	if (2 == ib_level)
 		return -EINVAL;
+	/*
+	 * only try to find sub objects iff this IB has
+	 * not been processed already
+	 */
 	for (i = 0; i < ib_obj_list->num_objs; i++) {
 		ib_obj = &(ib_obj_list->obj_list[i]);
 		if ((ib_obj != NULL) &&
@@ -659,6 +809,20 @@ static int adreno_cp_parse_ib2(struct kgsl_device *device,
 		SNAPSHOT_GPU_OBJECT_IB, ib_obj_list, 2);
 }
 
+/*
+ * adreno_ib_find_objs() - Find all IB objects in a given IB
+ * @device: The device pointer on which the IB executes
+ * @process: The process in which the IB and all contained objects are mapped.
+ * @gpuaddr: The gpu address of the IB
+ * @dwords: Size of ib in dwords
+ * @obj_type: The object type can be either an IB or a draw state sequence
+ * @ib_obj_list: The list in which the IB and the objects in it are added.
+ * @ib_level: Indicates if IB1 or IB2 is being processed
+ *
+ * Finds all IB objects in a given IB and puts then in a list. Can be called
+ * recursively for the IB2's in the IB1's
+ * Returns 0 on success else error code
+ */
 static int adreno_ib_find_objs(struct kgsl_device *device,
 				struct kgsl_process_private *process,
 				uint64_t gpuaddr, uint64_t dwords,
@@ -675,7 +839,7 @@ static int adreno_ib_find_objs(struct kgsl_device *device,
 	struct kgsl_mem_entry *entry;
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 
-	
+	/* check that this IB is not already on list */
 	for (i = 0; i < ib_obj_list->num_objs; i++) {
 		ib_obj = &(ib_obj_list->obj_list[i]);
 		if ((obj_type == ib_obj->snapshot_obj_type) &&
@@ -718,6 +882,10 @@ static int adreno_ib_find_objs(struct kgsl_device *device,
 		else if (pkt_is_type7(src[i]))
 			pktsize = type7_pkt_size(src[i]);
 
+		/*
+		 * If the packet isn't a type 1, type 3, type 4 or type 7 then
+		 * don't bother parsing it - it is likely corrupted
+		 */
 		else
 			break;
 
@@ -739,6 +907,11 @@ static int adreno_ib_find_objs(struct kgsl_device *device,
 				ret = ib_parse_type3(device, &src[i], process,
 						ib_obj_list,
 						&ib_parse_vars);
+				/*
+				 * If the parse function failed (probably
+				 * because of a bad decode) then bail out and
+				 * just capture the binary IB data
+				 */
 
 				if (ret)
 					goto done;
@@ -760,6 +933,11 @@ static int adreno_ib_find_objs(struct kgsl_device *device,
 				ret = ib_parse_type7(device, &src[i], process,
 						ib_obj_list,
 						&ib_parse_vars);
+				/*
+				 * If the parse function failed (probably
+				 * because of a bad decode) then bail out and
+				 * just capture the binary IB data
+				 */
 
 				if (ret)
 					goto done;
@@ -778,6 +956,11 @@ static int adreno_ib_find_objs(struct kgsl_device *device,
 	}
 
 done:
+	/*
+	 * For set draw objects there may not be a draw_indx packet at its end
+	 * to signal that we need to save the found objects in it, so just save
+	 * it here.
+	 */
 	if (!ret && SNAPSHOT_GPU_OBJECT_DRAW == obj_type)
 		ret = ib_add_type0_entries(device, process, ib_obj_list,
 			&ib_parse_vars);
@@ -788,6 +971,21 @@ done:
 }
 
 
+/*
+ * adreno_ib_create_object_list() - Find all the memory objects in IB
+ * @device: The device pointer on which the IB executes
+ * @process: The process in which the IB and all contained objects are mapped
+ * @gpuaddr: The gpu address of the IB
+ * @dwords: Size of ib in dwords
+ * @ib_obj_list: The list in which the IB and the objects in it are added.
+ *
+ * Find all the memory objects that an IB needs for execution and place
+ * them in a list including the IB.
+ * Returns the ib object list. On success 0 is returned, on failure error
+ * code is returned along with number of objects that was saved before
+ * error occurred. If no objects found then the list pointer is set to
+ * NULL.
+ */
 int adreno_ib_create_object_list(struct kgsl_device *device,
 		struct kgsl_process_private *process,
 		uint64_t gpuaddr, uint64_t dwords,
@@ -816,13 +1014,19 @@ int adreno_ib_create_object_list(struct kgsl_device *device,
 	ret = adreno_ib_find_objs(device, process, gpuaddr, dwords,
 		SNAPSHOT_GPU_OBJECT_IB, ib_obj_list, 1);
 
-	
+	/* Even if there was an error return the remaining objects found */
 	if (ib_obj_list->num_objs)
 		*out_ib_obj_list = ib_obj_list;
 
 	return ret;
 }
 
+/*
+ * adreno_ib_destroy_obj_list() - Destroy an ib object list
+ * @ib_obj_list: List to destroy
+ *
+ * Free up all resources used by an ib_obj_list
+ */
 void adreno_ib_destroy_obj_list(struct adreno_ib_object_list *ib_obj_list)
 {
 	int i;

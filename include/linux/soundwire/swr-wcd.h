@@ -21,7 +21,8 @@ enum {
 	SWR_CH_MAP,
 	SWR_DEVICE_DOWN,
 	SWR_DEVICE_UP,
-	SWR_SUBSYS_RESTART
+	SWR_SUBSYS_RESTART,
+	SWR_SET_NUM_RX_CH,
 };
 
 struct swr_mstr_port {
@@ -31,4 +32,4 @@ struct swr_mstr_port {
 
 extern int swrm_wcd_notify(struct platform_device *pdev, u32 id, void *data);
 
-#endif /* _LINUX_SWR_WCD_H */
+#endif 

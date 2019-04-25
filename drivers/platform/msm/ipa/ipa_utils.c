@@ -907,6 +907,53 @@ int ipa_get_ep_mapping(enum ipa_client_type client)
 }
 EXPORT_SYMBOL(ipa_get_ep_mapping);
 
+/* ipa_set_client() - provide client mapping
+ * @client: client type
+ *
+ * Return value: none
+ */
+void ipa_set_client(int index, enum ipacm_client_enum client, bool uplink)
+{
+	if (client >= IPACM_CLIENT_MAX || client < IPACM_CLIENT_USB) {
+		IPAERR("Bad client number! client =%d\n", client);
+	} else if (index >= IPA_MAX_NUM_PIPES || index < 0) {
+		IPAERR("Bad pipe index! index =%d\n", index);
+	} else {
+		ipa_ctx->ipacm_client[index].client_enum = client;
+		ipa_ctx->ipacm_client[index].uplink = uplink;
+	}
+}
+EXPORT_SYMBOL(ipa_set_client);
+
+/**
+ * ipa_get_client() - provide client mapping
+ * @client: client type
+ *
+ * Return value: none
+ */
+enum ipacm_client_enum ipa_get_client(int pipe_idx)
+{
+	if (pipe_idx >= IPA_MAX_NUM_PIPES || pipe_idx < 0) {
+		IPAERR("Bad pipe index! pipe_idx =%d\n", pipe_idx);
+		return IPACM_CLIENT_MAX;
+	} else {
+		return ipa_ctx->ipacm_client[pipe_idx].client_enum;
+	}
+}
+EXPORT_SYMBOL(ipa_get_client);
+
+/**
+ * ipa_get_client_uplink() - provide client mapping
+ * @client: client type
+ *
+ * Return value: none
+ */
+bool ipa_get_client_uplink(int pipe_idx)
+{
+	return ipa_ctx->ipacm_client[pipe_idx].uplink;
+}
+EXPORT_SYMBOL(ipa_get_client_uplink);
+
 /**
  * ipa_get_rm_resource_from_ep() - get the IPA_RM resource which is related to
  * the supplied pipe index.
@@ -3186,6 +3233,10 @@ void _ipa_cfg_ep_aggr_v2_0(u32 pipe_number,
 			IPA_ENDP_INIT_AGGR_n_AGGR_PKT_LIMIT_SHFT,
 			IPA_ENDP_INIT_AGGR_n_AGGR_PKT_LIMIT_BMSK);
 
+	IPA_SETFIELD_IN_REG(reg_val, ep_aggr->aggr_sw_eof_active,
+			IPA_ENDP_INIT_AGGR_n_AGGR_SW_EOF_ACTIVE_SHFT,
+			IPA_ENDP_INIT_AGGR_n_AGGR_SW_EOF_ACTIVE_BMSK);
+
 	ipa_write_reg(ipa_ctx->mmio,
 			IPA_ENDP_INIT_AGGR_N_OFST_v2_0(pipe_number), reg_val);
 }
@@ -4903,3 +4954,59 @@ u32 ipa_get_sys_yellow_wm(void)
 		return 0;
 }
 EXPORT_SYMBOL(ipa_get_sys_yellow_wm);
+
+void ipa_suspend_apps_pipes(bool suspend)
+{
+	struct ipa_ep_cfg_ctrl cfg;
+	int ipa_ep_idx;
+	u32 lan_empty = 0, wan_empty = 0;
+	int ret;
+	struct sps_event_notify notify;
+	struct ipa_ep_context *ep;
+
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.ipa_ep_suspend = suspend;
+
+	ipa_ep_idx = ipa_get_ep_mapping(IPA_CLIENT_APPS_LAN_CONS);
+	ep = &ipa_ctx->ep[ipa_ep_idx];
+	if (ep->valid) {
+		ipa_cfg_ep_ctrl(ipa_ep_idx, &cfg);
+		/* Check if the pipes are empty. */
+		ret = sps_is_pipe_empty(ep->ep_hdl, &lan_empty);
+		if (ret) {
+			IPAERR("%s: sps_is_pipe_empty failed with %d\n",
+				__func__, ret);
+		}
+		if (!lan_empty) {
+			IPADBG("LAN Cons is not-empty. Enter poll mode.\n");
+			notify.user = ep->sys;
+			notify.event_id = SPS_EVENT_EOT;
+			if (ep->sys->sps_callback)
+				ep->sys->sps_callback(&notify);
+		}
+	}
+
+	ipa_ep_idx = ipa_get_ep_mapping(IPA_CLIENT_APPS_WAN_CONS);
+	/* Considering the case for SSR. */
+	if (ipa_ep_idx == -1) {
+		IPADBG("Invalid client.\n");
+		return;
+	}
+	ep = &ipa_ctx->ep[ipa_ep_idx];
+	if (ep->valid) {
+		ipa_cfg_ep_ctrl(ipa_ep_idx, &cfg);
+		/* Check if the pipes are empty. */
+		ret = sps_is_pipe_empty(ep->ep_hdl, &wan_empty);
+		if (ret) {
+			IPAERR("%s: sps_is_pipe_empty failed with %d\n",
+				__func__, ret);
+		}
+		if (!wan_empty) {
+			IPADBG("WAN Cons is not-empty. Enter poll mode.\n");
+			notify.user = ep->sys;
+			notify.event_id = SPS_EVENT_EOT;
+			if (ep->sys->sps_callback)
+				ep->sys->sps_callback(&notify);
+		}
+	}
+}

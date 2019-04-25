@@ -45,6 +45,19 @@ static int wcd_resmgr_codec_reg_update_bits(struct wcd9xxx_resmgr_v2 *resmgr,
 	return change;
 }
 
+static int wcd_resmgr_codec_reg_read(struct wcd9xxx_resmgr_v2 *resmgr,
+				     unsigned int reg)
+{
+	int val;
+
+	if (resmgr->codec)
+		val = snd_soc_read(resmgr->codec, reg);
+	else
+		val = wcd9xxx_reg_read(resmgr->core_res, reg);
+
+	return val;
+}
+
 /*
  * wcd_resmgr_get_clk_type()
  * Returns clk type that is currently enabled
@@ -62,7 +75,6 @@ static void wcd_resmgr_cdc_specific_get_clk(struct wcd9xxx_resmgr_v2 *resmgr,
 						int clk_users)
 {
 	/* Caller of this function should have acquired BG_CLK lock */
-	WCD9XXX_V2_BG_CLK_UNLOCK(resmgr);
 	if (clk_users) {
 		if (resmgr->resmgr_cb &&
 		    resmgr->resmgr_cb->cdc_rco_ctrl) {
@@ -71,8 +83,6 @@ static void wcd_resmgr_cdc_specific_get_clk(struct wcd9xxx_resmgr_v2 *resmgr,
 								true);
 		}
 	}
-	/* Acquire BG_CLK lock before return */
-	WCD9XXX_V2_BG_CLK_LOCK(resmgr);
 }
 
 void wcd_resmgr_post_ssr_v2(struct wcd9xxx_resmgr_v2 *resmgr)
@@ -185,12 +195,12 @@ static int wcd_resmgr_enable_clk_mclk(struct wcd9xxx_resmgr_v2 *resmgr)
 		return -EINVAL;
 	}
 
-	resmgr->clk_mclk_users++;
+	if (++resmgr->clk_mclk_users == 1) {
 
-	if ((resmgr->clk_mclk_users == 1) &&
-	    (resmgr->clk_type == WCD_CLK_OFF)) {
 		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_CLK_TOP,
 						 0x80, 0x80);
+		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_CLK_TOP,
+						 0x08, 0x00);
 		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_CLK_TOP,
 						 0x04, 0x04);
 		wcd_resmgr_codec_reg_update_bits(resmgr,
@@ -204,14 +214,8 @@ static int wcd_resmgr_enable_clk_mclk(struct wcd9xxx_resmgr_v2 *resmgr)
 		 * as per HW requirement
 		 */
 		usleep_range(10, 15);
-	} else if ((resmgr->clk_mclk_users == 1) &&
-		   (resmgr->clk_type == WCD_CLK_RCO)) {
-		/* RCO to MCLK switch */
-		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_CLK_TOP,
-						 0x80, 0x80);
-		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_CLK_TOP,
-						 0x08, 0x00);
 	}
+
 	resmgr->clk_type = WCD_CLK_MCLK;
 
 	pr_debug("%s: mclk_users: %d, clk_type: %s\n", __func__,
@@ -228,22 +232,24 @@ static int wcd_resmgr_disable_clk_mclk(struct wcd9xxx_resmgr_v2 *resmgr)
 		return -EINVAL;
 	}
 
-	resmgr->clk_mclk_users--;
-	if ((resmgr->clk_mclk_users == 0) && (resmgr->clk_rco_users > 0)) {
-		/* MCLK to RCO switch */
-		wcd_resmgr_codec_reg_update_bits(resmgr,
-				WCD9335_ANA_CLK_TOP,
-				0x08, 0x08);
-		resmgr->clk_type = WCD_CLK_RCO;
-	} else if ((resmgr->clk_mclk_users == 0) &&
-		   (resmgr->clk_rco_users == 0)) {
-		/* Turn off MCLK */
-		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_CLK_TOP,
-						 0x04, 0x00);
+	if (--resmgr->clk_mclk_users == 0) {
+		if (resmgr->clk_rco_users > 0) {
+			/* MCLK to RCO switch */
+			wcd_resmgr_codec_reg_update_bits(resmgr,
+					WCD9335_ANA_CLK_TOP,
+					0x08, 0x08);
+			resmgr->clk_type = WCD_CLK_RCO;
+		} else {
+			wcd_resmgr_codec_reg_update_bits(resmgr,
+					WCD9335_ANA_CLK_TOP,
+					0x04, 0x00);
+			resmgr->clk_type = WCD_CLK_OFF;
+		}
+
 		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_CLK_TOP,
 						 0x80, 0x00);
-		resmgr->clk_type = WCD_CLK_OFF;
 	}
+
 	pr_debug("%s: mclk_users: %d, clk_type: %s\n", __func__,
 		 resmgr->clk_mclk_users,
 		 wcd_resmgr_clk_type_to_str(resmgr->clk_type));
@@ -253,6 +259,8 @@ static int wcd_resmgr_disable_clk_mclk(struct wcd9xxx_resmgr_v2 *resmgr)
 
 static int wcd_resmgr_enable_clk_rco(struct wcd9xxx_resmgr_v2 *resmgr)
 {
+	bool rco_cal_done = true;
+
 	resmgr->clk_rco_users++;
 	if ((resmgr->clk_rco_users == 1) &&
 	    ((resmgr->clk_type == WCD_CLK_OFF) ||
@@ -264,8 +272,10 @@ static int wcd_resmgr_enable_clk_rco(struct wcd9xxx_resmgr_v2 *resmgr)
 	} else if ((resmgr->clk_rco_users == 1) &&
 		   (resmgr->clk_mclk_users)) {
 		/* RCO Enable */
-		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_RCO,
-						 0x80, 0x80);
+		if (resmgr->sido_input_src == SIDO_SOURCE_INTERNAL)
+			wcd_resmgr_codec_reg_update_bits(resmgr,
+							 WCD9335_ANA_RCO,
+							 0x80, 0x80);
 		/*
 		 * 20us required after RCO BG is enabled as per HW
 		 * requirements
@@ -281,9 +291,16 @@ static int wcd_resmgr_enable_clk_rco(struct wcd9xxx_resmgr_v2 *resmgr)
 		/* RCO Calibration */
 		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_RCO,
 						 0x04, 0x04);
+		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_RCO,
+						 0x04, 0x00);
+
 		/* RCO calibration takes app. 5ms to complete */
 		usleep_range(WCD9XXX_RCO_CALIBRATION_DELAY_INC_US,
 		       WCD9XXX_RCO_CALIBRATION_DELAY_INC_US + 100);
+		if (wcd_resmgr_codec_reg_read(resmgr, WCD9335_ANA_RCO) & 0x02)
+			rco_cal_done = false;
+
+		WARN((!rco_cal_done), "RCO Calibration failed\n");
 
 		/* Switch MUX to RCO */
 		if (resmgr->clk_mclk_users == 1) {
@@ -304,7 +321,8 @@ static int wcd_resmgr_disable_clk_rco(struct wcd9xxx_resmgr_v2 *resmgr)
 {
 	if ((resmgr->clk_rco_users <= 0) ||
 	    (resmgr->clk_type == WCD_CLK_OFF)) {
-		pr_err("%s: No RCO Clk users, cannot disable\n", __func__);
+		pr_err("%s: rco_clk_users = %d, clk_type = %d, cannot disable\n",
+			__func__, resmgr->clk_rco_users, resmgr->clk_type);
 		return -EINVAL;
 	}
 
@@ -318,16 +336,20 @@ static int wcd_resmgr_disable_clk_rco(struct wcd9xxx_resmgr_v2 *resmgr)
 						 0x04, 0x00);
 		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_RCO,
 						 0x40, 0x00);
-		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_RCO,
-						 0x80, 0x00);
+		if (resmgr->sido_input_src == SIDO_SOURCE_INTERNAL)
+			wcd_resmgr_codec_reg_update_bits(resmgr,
+							 WCD9335_ANA_RCO,
+							 0x80, 0x00);
 		resmgr->clk_type = WCD_CLK_OFF;
 	} else if ((resmgr->clk_rco_users == 0) &&
 	      (resmgr->clk_mclk_users)) {
 		/* Disable RCO while MCLK is ON */
 		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_RCO,
 						 0x40, 0x00);
-		wcd_resmgr_codec_reg_update_bits(resmgr, WCD9335_ANA_RCO,
-						 0x80, 0x00);
+		if (resmgr->sido_input_src == SIDO_SOURCE_INTERNAL)
+			wcd_resmgr_codec_reg_update_bits(resmgr,
+							 WCD9335_ANA_RCO,
+							 0x80, 0x00);
 	}
 	pr_debug("%s: rco clk users: %d, clk_type: %s\n", __func__,
 		 resmgr->clk_rco_users,
@@ -424,6 +446,7 @@ struct wcd9xxx_resmgr_v2 *wcd_resmgr_init(
 	resmgr->master_bias_users = 0;
 	resmgr->codec = codec;
 	resmgr->core_res = core_res;
+	resmgr->sido_input_src = SIDO_SOURCE_INTERNAL;
 
 	return resmgr;
 }
@@ -460,6 +483,7 @@ int wcd_resmgr_post_init(struct wcd9xxx_resmgr_v2 *resmgr,
 	}
 
 	resmgr->codec = codec;
+	resmgr->resmgr_cb = resmgr_cb;
 
 	return 0;
 }

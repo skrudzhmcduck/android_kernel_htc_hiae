@@ -601,12 +601,22 @@ config USB_HSIC_SMSC_HUB
 	  This adds support for connecting devices like mouse in HSIC
 	  Host mode.
 
-config USB_EXT_TYPE_C
-	tristate "USB Type-C charger detection support using external chip"
+config USB_EXT_TYPE_C_PERICOM
+	tristate "USB Type-C charger detection support using Pericom chip"
 	depends on I2C && POWER_SUPPLY
 	help
 	  Enables support for the USB Type-C chargers using external
-	  chips connected using I2C.
+	  pericom chip connected using I2C.
+
+	  This adds support for detecting USB Type-C chargers that
+	  can supply upto 3A Vbus current for charging.
+
+config USB_EXT_TYPE_C_TI
+	tristate "USB Type-C charger detection support using TI chip"
+	depends on I2C && POWER_SUPPLY
+	help
+	  Enables support for the USB Type-C chargers using external
+	  TI chip connected using I2C.
 
 	  This adds support for detecting USB Type-C chargers that
 	  can supply upto 3A Vbus current for charging.
@@ -651,6 +661,12 @@ config CABLE_DETECT_ACCESSORY
 	boolean "CABLE ACCESSORY DETECT"
 	default n
 
+config HTC_FLASHLIGHT
+    boolean "HTC Flashlight API"
+    default n
+    help
+      This option enables support for the htc_flahlight function.
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
@@ -662,6 +678,8 @@ source "drivers/misc/mei/Kconfig"
 source "drivers/misc/vmw_vmci/Kconfig"
 source "drivers/misc/qcom/Kconfig"
 source "drivers/misc/headset/Kconfig"
+source "drivers/misc/fpr_FingerprintCardsw17/Kconfig"
 source "drivers/misc/fpr_FingerprintCard/Kconfig"
 source "drivers/misc/fpr_FingerprintCard_MFG/Kconfig"
+source "drivers/misc/fpr_FingerprintCard_REE/Kconfig"
 endmenu

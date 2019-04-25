@@ -22,6 +22,7 @@
 #endif
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_regulator_configure(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -54,6 +55,7 @@ supply_err:
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_regulator_release(fpc1020_data_t *fpc1020)
 {
 	if (fpc1020->vdd_tx != NULL) {
@@ -67,6 +69,7 @@ int fpc1020_regulator_release(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_regulator_set(fpc1020_data_t *fpc1020, bool enable)
 {
 	int error = 0;
@@ -80,6 +83,13 @@ int fpc1020_regulator_set(fpc1020_data_t *fpc1020, bool enable)
 	if (enable) {
 		dev_dbg(&fpc1020->spi->dev, "%s on\n", __func__);
 
+		/****** 
+		  Do we really need to set current?
+		  How would it affect the vibrator that shares this regulator?
+
+		regulator_set_optimum_mode(fpc1020->vcc_spi,
+					SUPPLY_SPI_REQ_CURRENT);
+		*/
 
 		error = (regulator_is_enabled(fpc1020->vdd_tx) == 0) ?
 					regulator_enable(fpc1020->vdd_tx) : 0;

@@ -26,7 +26,7 @@
 #include "bus.h"
 
 #define to_mmc_driver(d)	container_of(d, struct mmc_driver, drv)
-#define RUNTIME_SUSPEND_DELAY_MS 10000
+#define RUNTIME_SUSPEND_DELAY_MS 300000
 
 static ssize_t mmc_type_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
@@ -129,7 +129,7 @@ static void mmc_bus_shutdown(struct device *dev)
 		return;
 	}
 
-	if (drv->shutdown)
+	if (dev->driver && drv->shutdown)
 		drv->shutdown(card);
 }
 
@@ -342,6 +342,9 @@ int mmc_add_card(struct mmc_card *card)
 			queue_delayed_work(stats_workqueue, &card->host->stats_work,
 					msecs_to_jiffies(MMC_STATS_INTERVAL));
 		}
+
+		if (card->host->mmc_circbuf.buf)
+			card->host->circbuf_enable = true;
 		break;
 	case MMC_TYPE_SD:
 		type = "SD";
@@ -356,6 +359,9 @@ int mmc_add_card(struct mmc_card *card)
 			queue_delayed_work(stats_workqueue, &card->host->stats_work,
 					msecs_to_jiffies(MMC_STATS_INTERVAL));
 		}
+
+		if (card->host->mmc_circbuf.buf)
+			card->host->circbuf_enable = true;
 		break;
 	case MMC_TYPE_SDIO:
 		type = "SDIO";
@@ -381,11 +387,12 @@ int mmc_add_card(struct mmc_card *card)
 			mmc_card_ddr_mode(card) ? "DDR " : "",
 			type);
 	} else {
-		pr_info("%s: new %s%s%s%s%s%s card at address %04x\n",
+		pr_info("%s: new %s%s%s%s%s%s%s card at address %04x\n",
 			mmc_hostname(card->host),
 			mmc_card_uhs(card) ? "ultra high speed " :
 			(mmc_card_highspeed(card) ? "high speed " : ""),
 			(mmc_card_hs400(card) ? "HS400 " : ""),
+			(mmc_card_hs400_strobe(card) ? "enhanced strobe " : ""),
 			(mmc_card_hs200(card) ? "HS200 " : ""),
 			mmc_card_ddr_mode(card) ? "DDR " : "",
 			uhs_bus_speed_mode, type, card->rca);
@@ -451,6 +458,10 @@ void mmc_remove_card(struct mmc_card *card)
 		device_del(&card->dev);
 		pr_info("%s: %s done\n", mmc_hostname(card->host), __func__);
 	}
+
+	card->host->circbuf_enable = false;
+	if (card->host->mmc_circbuf.buf)
+		memset(card->host->mmc_circbuf.buf, 0, CIRC_BUFFER_SIZE);
 
 	kfree(card->wr_pack_stats.packing_events);
 	kfree(card->cached_ext_csd);

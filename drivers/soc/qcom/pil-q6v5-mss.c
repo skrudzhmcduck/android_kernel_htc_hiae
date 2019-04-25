@@ -156,7 +156,7 @@ static void log_modem_sfr(void)
 #if defined(CONFIG_HTC_FEATURES_SSR) 	
        if (get_radio_flag() & BIT(3)) 
        {
-         if (strstr(reason, "[htc_disable_ssr]"))
+         if (strstr(reason, "[htc_disable_ssr]") || strstr(reason, "SFR Init: wdog or kernel error suspected") )
          {
            subsys_set_restart_level(dev, RESET_SOC);
            subsys_set_enable_ramdump(dev, DISABLE_RAMDUMP);
@@ -284,13 +284,6 @@ static void modem_crash_shutdown(const struct subsys_desc *subsys)
 	}
 }
 
-static void modem_free_memory(const struct subsys_desc *subsys)
-{
-	struct modem_data *drv = subsys_to_drv(subsys);
-
-	pil_free_memory(&drv->q6->desc);
-}
-
 static int modem_ramdump(int enable, const struct subsys_desc *subsys)
 {
 	struct modem_data *drv = subsys_to_drv(subsys);
@@ -350,7 +343,6 @@ static int pil_subsys_init(struct modem_data *drv,
 	drv->subsys_desc.shutdown = modem_shutdown;
 	drv->subsys_desc.powerup = modem_powerup;
 	drv->subsys_desc.ramdump = modem_ramdump;
-	drv->subsys_desc.free_memory = modem_free_memory;
 	drv->subsys_desc.crash_shutdown = modem_crash_shutdown;
 	drv->subsys_desc.err_fatal_handler = modem_err_fatal_intr_handler;
 	drv->subsys_desc.stop_ack_handler = modem_stop_ack_intr_handler;
@@ -472,6 +464,14 @@ static int pil_mss_loadable_init(struct modem_data *drv,
 	q6->rom_clk = devm_clk_get(&pdev->dev, "mem_clk");
 	if (IS_ERR(q6->rom_clk))
 		return PTR_ERR(q6->rom_clk);
+
+	ret = of_property_read_u32(pdev->dev.of_node,
+					"qcom,pas-id", &drv->pas_id);
+	if (ret)
+		dev_warn(&pdev->dev, "Failed to find the pas_id.\n");
+
+	drv->subsys_desc.pil_mss_memsetup =
+	of_property_read_bool(pdev->dev.of_node, "qcom,pil-mss-memsetup");
 
 	
 	if (of_property_match_string(pdev->dev.of_node,

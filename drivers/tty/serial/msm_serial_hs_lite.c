@@ -1583,6 +1583,13 @@ static int msm_serial_hsl_probe(struct platform_device *pdev)
 	u32 line;
 	int ret;
 
+#ifdef CONFIG_SERIAL_MSM_HSL_CONSOLE
+	if (!msm_serial_hsl_enable) {
+		pr_info("serial console disabled, do not proceed msm_serial_hsl_probe().\n");
+		return -ENODEV;
+	}
+#endif
+
 	if (pdev->id == -1)
 		pdev->id = atomic_inc_return(&msm_serial_hsl_next_id) - 1;
 
@@ -1838,9 +1845,6 @@ static int __init msm_serial_hsl_init(void)
 	if (get_kernel_flag() & KERNEL_FLAG_SERIAL_HSL_ENABLE)
 		msm_serial_hsl_enable = 1;
 
-	if (!msm_serial_hsl_enable)
-		msm_hsl_uart_driver.cons = NULL;
-
 	ret = uart_register_driver(&msm_hsl_uart_driver);
 	if (unlikely(ret))
 		return ret;
@@ -1862,8 +1866,7 @@ static void __exit msm_serial_hsl_exit(void)
 {
 	debugfs_remove_recursive(debug_base);
 #ifdef CONFIG_SERIAL_MSM_HSL_CONSOLE
-	if (msm_serial_hsl_enable)
-		unregister_console(&msm_hsl_console);
+	unregister_console(&msm_hsl_console);
 #endif
 	platform_driver_unregister(&msm_hsl_platform_driver);
 	uart_unregister_driver(&msm_hsl_uart_driver);

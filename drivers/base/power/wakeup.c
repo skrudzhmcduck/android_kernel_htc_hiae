@@ -18,6 +18,7 @@
 #include <trace/events/power.h>
 
 #include "power.h"
+#include <soc/qcom/htc_util.h>
 
 bool events_check_enabled __read_mostly;
 
@@ -43,6 +44,8 @@ static void pm_wakeup_timer_fn(unsigned long data);
 static LIST_HEAD(wakeup_sources);
 
 static DECLARE_WAIT_QUEUE_HEAD(wakeup_count_wait_queue);
+
+static ktime_t last_read_time;
 
 void wakeup_source_prepare(struct wakeup_source *ws, const char *name)
 {
@@ -256,10 +259,20 @@ int device_set_wakeup_enable(struct device *dev, bool enable)
 }
 EXPORT_SYMBOL_GPL(device_set_wakeup_enable);
 
+static bool wakeup_source_not_registered(struct wakeup_source *ws)
+{
+	return ws->timer.function != pm_wakeup_timer_fn ||
+		   ws->timer.data != (unsigned long)ws;
+}
+
 
 static void wakeup_source_activate(struct wakeup_source *ws)
 {
 	unsigned int cec;
+
+	if (WARN(wakeup_source_not_registered(ws),
+			"unregistered wakeup source\n"))
+		return;
 
 	freeze_wake();
 
@@ -458,7 +471,7 @@ void pm_get_active_wakeup_sources(char *pending_wakeup_source, size_t max)
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(ws, &wakeup_sources, entry) {
-		if (ws->active) {
+		if (ws->active && len < max) {
 			if (!active)
 				len += scnprintf(pending_wakeup_source, max,
 						"Pending Wakeup Sources: ");
@@ -530,9 +543,14 @@ bool pm_wakeup_pending(void)
 bool pm_get_wakeup_count(unsigned int *count, bool block)
 {
 	unsigned int cnt, inpr;
+	unsigned long flags;
 
 	if (block) {
 		DEFINE_WAIT(wait);
+
+		spin_lock_irqsave(&events_lock, flags);
+		last_read_time = ktime_get();
+		spin_unlock_irqrestore(&events_lock, flags);
 
 		for (;;) {
 			prepare_to_wait(&wakeup_count_wait_queue, &wait,
@@ -555,6 +573,7 @@ bool pm_save_wakeup_count(unsigned int count)
 {
 	unsigned int cnt, inpr;
 	unsigned long flags;
+	struct wakeup_source *ws;
 
 	events_check_enabled = false;
 	spin_lock_irqsave(&events_lock, flags);
@@ -562,6 +581,15 @@ bool pm_save_wakeup_count(unsigned int count)
 	if (cnt == count && inpr == 0) {
 		saved_count = count;
 		events_check_enabled = true;
+	} else {
+		rcu_read_lock();
+		list_for_each_entry_rcu(ws, &wakeup_sources, entry) {
+			if (ws->active ||
+			    ktime_compare(ws->last_time, last_read_time) > 0) {
+				ws->wakeup_count++;
+			}
+		}
+		rcu_read_unlock();
 	}
 	spin_unlock_irqrestore(&events_lock, flags);
 	return events_check_enabled;
@@ -639,29 +667,32 @@ static int print_wakeup_source_stats(struct seq_file *m,
 }
 
 #ifdef CONFIG_HTC_POWER_DEBUG
-void htc_print_wakeup_source(struct wakeup_source *ws)
-{
-        if (ws->active) {
-                if (ws->timer_expires) {
-                        long timeout = ws->timer_expires - jiffies;
-                        if (timeout > 0)
-                                printk(" '%s', time left %ld ticks; ", ws->name, timeout);
-                } else
-                        printk(" '%s' ", ws->name);
-        }
-}
-
-void htc_print_active_wakeup_sources(void)
+void htc_print_active_wakeup_sources(bool print_embedded)
 {
         struct wakeup_source *ws;
-        unsigned long flags;
+		unsigned long flags;
+        char output[512];
+        char piece[64];
 
-        printk("wakeup sources: ");
         spin_lock_irqsave(&events_lock, flags);
-        list_for_each_entry_rcu(ws, &wakeup_sources, entry)
-                htc_print_wakeup_source(ws);
+        memset(output, 0, sizeof(output));
+        list_for_each_entry_rcu(ws, &wakeup_sources, entry) {
+            if (ws->active) {
+                memset(piece, 0, sizeof(piece));
+                if (ws->timer_expires) {
+                    long timeout = ws->timer_expires - jiffies;
+                    if (timeout > 0) {
+                        snprintf(piece, sizeof(piece), " '%s', time left %ld ticks; ", ws->name, timeout);
+                        safe_strcat(output, piece);
+                    }
+                } else {
+                    snprintf(piece, sizeof(piece), " '%s' ", ws->name);
+                    safe_strcat(output, piece);
+                }
+            }
+        }
         spin_unlock_irqrestore(&events_lock, flags);
-        printk("\n");
+        k_pr_embedded_cond(print_embedded, "[K] wakeup sources: %s\n", output);
 }
 #endif
 

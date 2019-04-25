@@ -28,6 +28,7 @@
 #include <linux/irqchip.h>
 #include <linux/seq_file.h>
 #include <linux/ratelimit.h>
+#include <soc/qcom/htc_util.h>
 
 unsigned long irq_err_count;
 
@@ -42,11 +43,14 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 
 #ifdef CONFIG_HTC_POWER_DEBUG
 unsigned int previous_irqs[NR_IRQS+1] = {0};
+static char irq_output[1024];
 static void htc_show_interrupt(int i)
 {
         struct irqaction *action;
         unsigned long flags;
         struct irq_desc *desc;
+        char irq_piece[32];
+        char name_resize[16];
 
         if (i < NR_IRQS) {
                 desc = irq_to_desc(i);
@@ -58,12 +62,15 @@ static void htc_show_interrupt(int i)
                         goto unlock;
                 if (!(kstat_irqs_cpu(i, 0)) || previous_irqs[i] == (kstat_irqs_cpu(i, 0)))
                         goto unlock;
-                printk("%3d:", i);
-                printk("%6u\t", kstat_irqs_cpu(i, 0)-previous_irqs[i]);
-                printk("%s", action->name);
-                for (action = action->next; action; action = action->next)
-                        printk(", %s", action->name);
-                printk("\n");
+                memset(irq_piece, 0, sizeof(irq_piece));
+                memset(name_resize, 0, sizeof(name_resize));
+                strncat(name_resize, action->name, 8);
+                snprintf(irq_piece, sizeof(irq_piece), "%s(%d:%s,%u)",
+                    strlen(irq_output)>0 ? "," : "",
+                    i,
+                    name_resize,
+                    kstat_irqs_cpu(i, 0)-previous_irqs[i]);
+                safe_strcat(irq_output, irq_piece);
                 previous_irqs[i] = kstat_irqs_cpu(i, 0);
 unlock:
                 raw_spin_unlock_irqrestore(&desc->lock, flags);
@@ -78,8 +85,11 @@ unlock:
 void htc_show_interrupts(void)
 {
         int i = 0;
-        for (i = 0; i <= NR_IRQS; i++)
+        memset(irq_output, 0, sizeof(irq_output));
+        for (i = 0; i <= NR_IRQS; i++) {
                 htc_show_interrupt(i);
+        }
+        k_pr_embedded("[K] irq: %s\n", irq_output);
 }
 #endif
 

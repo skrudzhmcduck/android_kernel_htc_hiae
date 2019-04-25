@@ -114,8 +114,8 @@ struct afe_audio_buffer {
 	dma_addr_t phys;
 	void       *data;
 	uint32_t   used;
-	uint32_t   size;
-	uint32_t   actual_size; 
+	uint32_t   size;/* size of buffer */
+	uint32_t   actual_size; /* actual number of bytes read by DSP */
 	struct      ion_handle *handle;
 	struct      ion_client *client;
 };
@@ -127,19 +127,19 @@ struct afe_audio_port_data {
 	uint32_t	    cpu_buf;
 	struct list_head    mem_map_handle;
 	uint32_t	    tmp_hdl;
-	
+	/* read or write locks */
 	struct mutex	    lock;
 	spinlock_t	    dsp_lock;
 };
 
 struct afe_audio_client {
 	atomic_t	       cmd_state;
-	
+	/* Relative or absolute TS */
 	uint32_t	       time_flag;
 	void		       *priv;
 	uint64_t	       time_stamp;
 	struct mutex	       cmd_lock;
-	
+	/* idx:1 out port, 0: in port*/
 	struct afe_audio_port_data port[2];
 	wait_queue_head_t      cmd_wait;
 	uint32_t               mem_map_handle;
@@ -201,6 +201,9 @@ struct afe_audio_client *q6afe_audio_client_alloc(void *priv);
 int q6afe_audio_client_buf_free_contiguous(unsigned int dir,
 			struct afe_audio_client *ac);
 void q6afe_audio_client_free(struct afe_audio_client *ac);
+/* if port_id is virtual, convert to physical..
+ * if port_id is already physical, return physical
+ */
 int afe_convert_virtual_to_portid(u16 port_id);
 
 int afe_pseudo_port_start_nowait(u16 port_id);
@@ -235,4 +238,4 @@ int afe_port_group_set_param(u16 *port_id, int channel_count);
 int afe_port_group_enable(u16 enable);
 int afe_unmap_rtac_block(uint32_t *mem_map_handle);
 int afe_map_rtac_block(struct rtac_cal_block_data *cal_block);
-#endif 
+#endif /* __Q6AFE_V2_H__ */

@@ -1,1 +1,1 @@
-obj-y += htc_hiaaero-panel.o
+obj-y += htc_8952-76-panel.o

@@ -49,7 +49,7 @@ static uint32_t charging_flag = 0;
 #ifdef CONFIG_LED_CHECK_PANEL_CONNECTED
 static int display_flag = 0;
 module_param(display_flag, int, 0660); 
-struct lp5521_led *g_led_led_data;
+static struct lp5521_led *g_led_led_data;
 #endif
 static struct led_i2c_platform_data *plat_data;
 #define Mode_Mask (0xff << 24)
@@ -568,7 +568,7 @@ static void lp5521_led_off(struct i2c_client *client)
 }
 
 #ifdef CONFIG_LED_CHECK_PANEL_CONNECTED
-void green_blink_mfg(int onoff){
+static void green_blink_mfg(int onoff){
 	I(" %s , set display_flag = %d\n" , __func__, onoff);
 	display_flag = onoff;
 	if(display_flag){
@@ -924,6 +924,16 @@ static int lp5521_parse_dt(struct device *dev, struct led_i2c_platform_data *pda
 		pdata->tp_3v3_en = of_get_named_gpio(dt, "lp5521,tp_3v3_en", 0);
 	}
 #endif
+#ifdef CONFIG_LEDS_LP5562_HTC
+	pdata->tp_3v3_en = 0;
+	prop = of_find_property(dt, "lp5521,tp_3v3_en", NULL);
+	if (prop) {
+		pdata->tp_3v3_en = of_get_named_gpio(dt, "lp5521,tp_3v3_en", 0);
+		gpio_request(pdata->tp_3v3_en, "led_3v3");
+		gpio_direction_output(pdata->tp_3v3_en, 1);
+		gpio_free(pdata->tp_3v3_en);
+	}
+#endif
 	prop = of_find_property(dt, "lp5521,num_leds", NULL);
 	if (prop) {
 		of_property_read_u32(dt, "lp5521,num_leds", &pdata->num_leds);
@@ -943,6 +953,9 @@ static int lp5521_led_probe(struct i2c_client *client
 	struct led_i2c_platform_data *pdata;
 	int ret =0;
 	int i;
+#ifdef CONFIG_LEDS_LP5562_HTC
+		u8 check_chip_used;
+#endif
 
 	printk("[LED][PROBE] led driver probe +++\n");
 
@@ -958,8 +971,10 @@ static int lp5521_led_probe(struct i2c_client *client
 	cdata->client = client;
 
 	pdata = kzalloc(sizeof(*pdata), GFP_KERNEL);
-	if (pdata == NULL)
+	if (pdata == NULL) {
 		ret = -ENOMEM;
+		goto err_exit;
+	}
 	ret = lp5521_parse_dt(&client->dev, pdata);
 
 	
@@ -973,13 +988,13 @@ static int lp5521_led_probe(struct i2c_client *client
 		ret = gpio_request(pdata->ena_gpio, "led_enable");
 		if (ret < 0) {
 			pr_err("[LED] %s: gpio_request failed ena gpio %d\n", __func__, ret);
-			return ret;
+			goto err_request_ena_gpio;
 		}
 		ret = gpio_direction_output(pdata->ena_gpio, 1);
 		if (ret < 0) {
 			pr_err("[LED] %s: gpio_direction_output failed %d\n", __func__, ret);
 			gpio_free(pdata->ena_gpio);
-			return ret;
+			goto err_request_ena_gpio;
 		}
 	} 
 	
@@ -987,7 +1002,6 @@ static int lp5521_led_probe(struct i2c_client *client
 		ret = gpio_request(pdata->charging_gpio, "charging_led_switch");
 		if (ret < 0) {
 			pr_err("[LED] %s: gpio_request failed charging switch %d\n", __func__, ret);
-			return ret;
 		}
 	}
 	
@@ -995,16 +1009,22 @@ static int lp5521_led_probe(struct i2c_client *client
 		ret = gpio_request(pdata->tri_gpio, "led_trigger");
 		if (ret < 0) {
 			pr_err("[LED] %s: gpio_request failed led trigger %d\n", __func__, ret);
-			return ret;
 		}
 		ret = gpio_direction_output(pdata->tri_gpio, 0);
 		if (ret < 0) {
 			pr_err("[LED] %s: gpio_direction_output failed %d\n", __func__, ret);
 			gpio_free(pdata->tri_gpio);
-			return ret;
 		}
 	}
 	private_lp5521_client = client;
+
+#ifdef CONFIG_LEDS_LP5562_HTC
+	ret = i2c_read_block(client, ENABLE_REGISTER, &check_chip_used, 1);
+	if(ret < 0) {
+		I("Not use LP5521 LED.\n");
+		goto err_check_chip_not_used;
+	}
+#endif
 
 	g_led_work_queue = create_workqueue("led");
 	if (!g_led_work_queue) {
@@ -1072,7 +1092,6 @@ static int lp5521_led_probe(struct i2c_client *client
 
 
 err_register_attr_off_timer:
-	kfree(cdata);
 	for (i = 0; i < pdata->num_leds; i++) {
 		device_remove_file(cdata->leds[i].cdev.dev,&dev_attr_off_timer);
 	}
@@ -1082,7 +1101,19 @@ err_register_attr_ModeRGB:
 			device_remove_file(cdata->leds[i].cdev.dev,&dev_attr_ModeRGB);
 	}
 err_create_work_queue:
+#ifdef CONFIG_LEDS_LP5562_HTC
+err_check_chip_not_used:
+	if (pdata->ena_gpio)
+		gpio_free(pdata->ena_gpio);
+	if (pdata->charging_gpio)
+		gpio_free(pdata->charging_gpio);
+	if (pdata->tri_gpio)
+		gpio_free(pdata->tri_gpio);
+#endif
+err_request_ena_gpio:
 	kfree(pdata);
+err_exit:
+	  kfree(cdata);
 err_cdata:
 	return ret;
 }
@@ -1093,9 +1124,6 @@ static int lp5521_led_remove(struct i2c_client *client)
 	int i,ret;
 
 	cdata = i2c_get_clientdata(client);
-	cdata = kzalloc(sizeof(struct lp5521_chip), GFP_KERNEL);
-	i2c_set_clientdata(client, cdata);
-	cdata->client = client;
 
 	ret = lp5521_parse_dt(&client->dev, plat_data);
 	if (plat_data->ena_gpio) {

@@ -12,6 +12,7 @@
  */
 
 #include "msm8976-qrd.dtsi"
+#include "msm8976-wsa881x.dtsi"
 
 &i2c_4 { /* BLSP1 QUP4 */
 	focaltech@38 {
@@ -47,6 +48,7 @@
 		focaltech,fw-delay-era-flsh-ms = <2000>;
 		focaltech,fw-auto-cal;
 		focaltech,ignore-id-check;
+		focaltech,resume-in-workqueue;
 	};
 
 	synaptics@20 {
@@ -115,27 +117,11 @@
 			"SpkrRight IN", "SPK2 OUT";
 
 		qcom,msm-mbhc-hphl-swh = <1>;
-		asoc-wsa-codec-names = "wsa881x.20170211";
-		asoc-wsa-codec-prefixes = "SpkrRight";
-	};
-};
-
-&slim_msm {
-	tasha_codec {
-		swr_master {
-			compatible = "qcom,swr-wcd";
-			#address-cells = <2>;
-			#size-cells = <0>;
-
-			wsa881x@20170211 {
-				compatible = "qcom,wsa881x";
-				reg = <0x00 0x20170211>;
-				pinctrl-names = "wsa_spkr_sd_act",
-						"wsa_spkr_sd_sus";
-				pinctrl-0 = <&wsa_spkr_sd_act>;
-				pinctrl-1 = <&wsa_spkr_sd_sus>;
-			};
-		};
+		qcom,max-aux-codec = <1>;
+//HTC_AUD_START
+//              qcom,aux-codec = "wsa881x.20170211";
+//              qcom,aux-codec-prefix = "SpkrLeft";
+//HTC_AUD_END
 	};
 };
 
@@ -193,6 +179,10 @@
 	bias-disable;
 };
 
+&pmi8950_haptic {
+	qcom,vmax-mv = <3300>;
+};
+
 &mdss_mdp {
 	qcom,mdss-pref-prim-intf = "dsi";
 };
@@ -209,6 +199,9 @@
 	qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_wled";
 	qcom,mdss-dsi-bl-min-level = <1>;
 	qcom,mdss-dsi-bl-max-level = <4095>;
+	qcom,esd-check-enabled;
+	qcom,mdss-dsi-pan-enable-dynamic-fps;
+	qcom,mdss-dsi-pan-fps-update = "dfps_immediate_porch_mode_hfp";
 };
 
 &pmx_mdss {
@@ -230,13 +223,6 @@
 	qcom,platform-reset-gpio = <&msm_gpio 25 0>;
 };
 
-&pmi8950_charger {
-	qcom,float-voltage-mv = <4400>;
-	qcom,chg-led-sw-controls;
-	qcom,chg-led-support;
-	status = "okay";
-};
-
 / {
 	qrd_batterydata: qcom,battery-data {
 		qcom,batt-id-range-pct = <15>;
@@ -244,8 +230,22 @@
 	};
 };
 
+&pmi8950_charger {
+	qcom,battery-data = <&qrd_batterydata>;
+	qcom,float-voltage-mv = <4400>;
+	qcom,chg-led-sw-controls;
+	qcom,chg-led-support;
+	status = "okay";
+};
+
 &pmi8950_fg {
 	qcom,battery-data = <&qrd_batterydata>;
+	qcom,cold-bat-decidegc = <(-100)>;
+	qcom,cool-bat-decidegc = <(-100)>;
+	qcom,hot-bat-decidegc = <550>;
+	qcom,warm-bat-decidegc = <550>;
+	qcom,bad-battery-detection-enable;
+	qcom,hold-soc-while-full;
 };
 
 &labibb {

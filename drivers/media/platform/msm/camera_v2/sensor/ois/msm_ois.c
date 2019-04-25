@@ -38,6 +38,10 @@ static int32_t msm_ois_write_settings(struct msm_ois_ctrl_t *o_ctrl,
 {
 	int32_t rc = -EFAULT;
 	int32_t i = 0;
+	
+	int32_t retry_cnt = 0;
+	uint8_t read_data[4] = {0};
+	
 	struct msm_camera_i2c_seq_reg_array reg_setting;
 	CDBG("Enter\n");
 
@@ -67,6 +71,25 @@ static int32_t msm_ois_write_settings(struct msm_ois_ctrl_t *o_ctrl,
 				reg_setting.reg_data[3] = (uint8_t)
 					(settings[i].reg_data & 0x000000FF);
 				reg_setting.reg_data_size = 4;
+
+				
+				if(o_ctrl->highlvcmd_check)
+				{
+					for (retry_cnt = 0; retry_cnt < 10; retry_cnt++) {
+						rc = o_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(&o_ctrl->i2c_client, 0xF100, read_data, 4);
+						if (rc < 0 || read_data[0] == 1) {
+							retry_cnt++;
+							pr_err("[OIS]%s: ois status isn't ready to enable, retry_cnt=%d", __func__, retry_cnt);
+							msleep(3);
+						}
+						else
+						{
+							break;
+						}
+					}
+				}
+				
+
 				rc = o_ctrl->i2c_client.i2c_func_tbl->
 					i2c_write_seq(&o_ctrl->i2c_client,
 					reg_setting.reg_addr,
@@ -211,6 +234,13 @@ static int32_t msm_ois_control(struct msm_ois_ctrl_t *o_ctrl,
 			set_info->ois_params.i2c_addr;
 	}
 	o_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
+
+	
+	if(!strncmp(set_info->ois_params.OIS_NAME, "lc898123", sizeof("lc898123") -1))
+		o_ctrl->highlvcmd_check = 1;
+	else
+		o_ctrl->highlvcmd_check = 0;
+	
 
 
 	if (set_info->ois_params.setting_size > 0 &&
@@ -414,7 +444,7 @@ static long msm_ois_subdev_ioctl(struct v4l2_subdev *sd,
 	struct msm_ois_ctrl_t *o_ctrl = v4l2_get_subdevdata(sd);
 	void __user *argp = (void __user *)arg;
 	CDBG("Enter\n");
-	CDBG("%s:%d o_ctrl %p argp %p\n", __func__, __LINE__, o_ctrl, argp);
+	CDBG("%s:%d o_ctrl %pK argp %pK\n", __func__, __LINE__, o_ctrl, argp);
 	switch (cmd) {
 	case VIDIOC_MSM_SENSOR_GET_SUBDEV_ID:
 		return msm_ois_get_subdev_id(o_ctrl, argp);
@@ -491,7 +521,7 @@ static int32_t msm_ois_i2c_probe(struct i2c_client *client,
 		goto probe_failure;
 	}
 
-	CDBG("client = 0x%p\n",  client);
+	CDBG("client = 0x%pK\n",  client);
 
 	rc = of_property_read_u32(client->dev.of_node, "cell-index",
 		&ois_ctrl_t->subdev_id);
@@ -569,6 +599,10 @@ static long msm_ois_subdev_do_ioctl(
 			ois_data.cfg.set_info.ois_params.settings =
 				compat_ptr(u32->cfg.set_info.ois_params.
 				settings);
+			
+			if (u32->cfg.set_info.ois_params.OIS_NAME != NULL)
+				strlcpy(ois_data.cfg.set_info.ois_params.OIS_NAME, u32->cfg.set_info.ois_params.OIS_NAME, sizeof(ois_data.cfg.set_info.ois_params.OIS_NAME));
+			
 			parg = &ois_data;
 			break;
 		case CFG_OIS_I2C_WRITE_SEQ_TABLE:

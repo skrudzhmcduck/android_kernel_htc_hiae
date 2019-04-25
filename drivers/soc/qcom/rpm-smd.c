@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -64,7 +64,7 @@ struct msm_rpm_driver_data {
 #define DEFAULT_BUFFER_SIZE 256
 #define DEBUG_PRINT_BUFFER_SIZE 512
 #define MAX_SLEEP_BUFFER 128
-#define GFP_FLAG(noirq) (noirq ? GFP_ATOMIC : GFP_KERNEL)
+#define GFP_FLAG(noirq) (noirq ? GFP_ATOMIC : GFP_NOFS)
 #define INV_RSC "resource does not exist"
 #define ERR "err\0"
 #define MAX_ERR_BUFFER_SIZE 128
@@ -364,13 +364,13 @@ static inline int msm_rpm_get_error_from_ack(uint8_t *buf)
 	if (!req_len)
 		return 0;
 
-	pr_err("%s:rpm returned error or nack req_len: %d id_ack: %d\n",
-				__func__, tmp_buf->req_len, tmp_buf->id_ack);
+	pr_err("%s:rpm returned error or nack req_len: %d id_ack: %d tmp buf addr: %p buf:%p\n",
+				__func__, tmp_buf->req_len, tmp_buf->id_ack,(void *) tmp_buf, buf);
 
 	tmp = buf + sizeof(struct msm_rpm_ack_msg);
 
 	if (memcmp(tmp, ERR, sizeof(uint32_t))) {
-		pr_err("%s rpm returned error\n", __func__);
+		pr_err("%s rpm returned error  %s tmp %p buf %p\n", __func__, tmp, tmp, buf);
 		BUG_ON(1);
 	}
 
@@ -754,8 +754,10 @@ static struct msm_rpm_wait_data *msm_rpm_get_entry_from_msg_id(uint32_t msg_id)
 
 	list_for_each(ptr, &msm_rpm_wait_list) {
 		elem = list_entry(ptr, struct msm_rpm_wait_data, list);
-		if (elem && (elem->msg_id == msg_id))
+		if (elem && (elem->msg_id == msg_id)) {
+			trace_rpm_msg_id(msm_rpm_msg_id.counter, elem->msg_id, msg_id);
 			break;
+		}
 		elem = NULL;
 	}
 	spin_unlock_irqrestore(&msm_rpm_list_lock, flags);
@@ -771,6 +773,7 @@ static uint32_t msm_rpm_get_next_msg_id(void)
 		id = atomic_inc_return(&msm_rpm_msg_id);
 	} while ((id == 0) || (id == 1) || msm_rpm_get_entry_from_msg_id(id));
 
+	trace_rpm_msg_id(msm_rpm_msg_id.counter, id, 0xDEADBEEF);
 	return id;
 }
 
@@ -886,7 +889,9 @@ static void msm_rpm_smd_work(struct work_struct *work)
 		while (smd_is_pkt_avail(msm_rpm_data.ch_info)) {
 			if (msm_rpm_read_smd_data(buf))
 				break;
+			trace_rpm_smd_ack_buf(buf, msg_id, errno);
 			msg_id = msm_rpm_get_msg_id_from_ack(buf);
+			trace_rpm_smd_ack_buf(buf, msg_id, errno);
 			errno = msm_rpm_get_error_from_ack((uint8_t *)buf);
 			trace_rpm_smd_ack_recvd(0, msg_id, errno);
 			msm_rpm_process_ack(msg_id, errno);

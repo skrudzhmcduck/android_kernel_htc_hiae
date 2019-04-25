@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
 *
 * This program is free software; you can redistribute it and/or modify
 * it under the terms of the GNU General Public License version 2 and
@@ -183,18 +183,6 @@ static void pcm_afe_process_tx_pkt(uint32_t opcode,
 			switch (event) {
 			case AFE_EVENT_RTPORT_START: {
 				prtd->dsp_cnt = 0;
-				/* Calculate poll time.
-				 * Split steps to avoid overflow.
-				 * Poll time-time corresponding to one period
-				 * in bytes.
-				 * (Samplerate * channelcount * format) =
-				 * bytes in 1 sec.
-				 * Poll time =
-				 *	(period bytes / bytes in one sec) *
-				 *	 1000000 micro seconds.
-				 * Multiplication by 1000000 is done in two
-				 * steps to keep the accuracy of poll time.
-				 */
 				period_bytes = ((uint64_t)(
 					(snd_pcm_lib_period_bytes(
 						prtd->substream)) *
@@ -268,14 +256,6 @@ static void pcm_afe_process_rx_pkt(uint32_t opcode,
 		switch (event) {
 		case AFE_EVENT_RTPORT_START: {
 			prtd->dsp_cnt = 0;
-			/* Calculate poll time. Split steps to avoid overflow.
-			 * Poll time-time corresponding to one period in bytes.
-			 * (Samplerate * channelcount * format)=bytes in 1 sec.
-			 * Poll time =  (period bytes / bytes in one sec) *
-			 * 1000000 micro seconds.
-			 * Multiplication by 1000000 is done in two steps to
-			 * keep the accuracy of poll time.
-			 */
 			period_bytes = ((uint64_t)(
 				(snd_pcm_lib_period_bytes(prtd->substream)) *
 				 1000));
@@ -365,7 +345,6 @@ static int msm_afe_capture_prepare(struct snd_pcm_substream *substream)
 	return 0;
 }
 
-/* Conventional and unconventional sample rate supported */
 static unsigned int supported_sample_rates[] = {
 	8000, 16000, 48000
 };
@@ -387,7 +366,7 @@ static int msm_afe_open(struct snd_pcm_substream *substream)
 		pr_err("Failed to allocate memory for msm_audio\n");
 		return -ENOMEM;
 	} else
-		pr_debug("prtd %p\n", prtd);
+		pr_debug("prtd %pK\n", prtd);
 
 	mutex_init(&prtd->lock);
 	spin_lock_init(&prtd->dsp_lock);
@@ -422,7 +401,7 @@ static int msm_afe_open(struct snd_pcm_substream *substream)
 				&constraints_sample_rates);
 	if (ret < 0)
 		pr_err("snd_pcm_hw_constraint_list failed\n");
-	/* Ensure that buffer size is a multiple of period size */
+	
 	ret = snd_pcm_hw_constraint_integer(runtime,
 					    SNDRV_PCM_HW_PARAM_PERIODS);
 	if (ret < 0)
@@ -499,6 +478,7 @@ done:
 	mutex_unlock(&prtd->lock);
 	prtd->prepared--;
 	kfree(prtd);
+	runtime->private_data = NULL;
 	return 0;
 }
 static int msm_afe_prepare(struct snd_pcm_substream *substream)
@@ -606,7 +586,7 @@ static int msm_afe_hw_params(struct snd_pcm_substream *substream,
 		return -ENOMEM;
 	}
 
-	pr_debug("%s:buf = %p\n", __func__, buf);
+	pr_debug("%s:buf = %pK\n", __func__, buf);
 	dma_buf->dev.type = SNDRV_DMA_TYPE_DEV;
 	dma_buf->dev.dev = substream->pcm->card->dev;
 	dma_buf->private_data = NULL;

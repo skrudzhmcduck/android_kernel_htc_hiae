@@ -151,6 +151,22 @@ config TOUCHSCREEN_CY8CTMG110
 	  To compile this driver as a module, choose M here: the
 	  module will be called cy8ctmg110_ts.
 
+config TOUCHSCREEN_CYPRESS_CAP
+        tristate "Cypress Cap sensor"
+        depends on I2C
+        default n
+        help
+          Say Y here if you have cap sensor on your device
+          If unsure, say N.
+
+config TOUCHSCREEN_CAPSENSOR_FW_UPDATE
+        tristate "Capsensor firmware update"
+        default y
+        help
+          Say Y here to support cap firmware update
+
+          If unsure, say N.
+
 config TOUCHSCREEN_CYTTSP_CORE
 	tristate "Cypress TTSP touchscreen"
 	help
@@ -1019,6 +1035,16 @@ config TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called synaptics_dsx_fw_update.
+
+config TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
+	bool "Synaptics DSX firmware update extra sysfs attributes"
+	depends on TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE
+	help
+	  Say Y here to enable support for extra sysfs attributes
+	  supporting firmware update in a development environment.
+	  This does not affect the core or other subsystem attributes.
+
+	  If unsure, say N.
 
 config SECURE_TOUCH
 	bool "Secure Touch"

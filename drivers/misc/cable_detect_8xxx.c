@@ -679,6 +679,7 @@ static int second_detect(struct cable_detect_info *pInfo)
 	return type;
 }
 
+#ifndef CONFIG_USB_FAIRCHILD_FUSB302
 static int get_usb_id_adc(char *buffer, struct kernel_param *kp)
 {
 	unsigned length = 0;
@@ -691,6 +692,7 @@ static int get_usb_id_adc(char *buffer, struct kernel_param *kp)
 	return length;
 }
 module_param_call(usb_id_adc, NULL, get_usb_id_adc, NULL, 0664);
+#endif
 
 static ssize_t dock_status_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
@@ -698,11 +700,11 @@ static ssize_t dock_status_show(struct device *dev,
 	struct cable_detect_info *pInfo = &the_cable_info;
 
 	if (pInfo->accessory_type == DOCK_STATE_DESK || pInfo->accessory_type == DOCK_STATE_AUDIO_DOCK)
-		return sprintf(buf, "online\n");
+		return snprintf(buf, PAGE_SIZE, "online\n");
 	else if (pInfo->accessory_type == 3) 
-		return sprintf(buf, "online\n");
+		return snprintf(buf, PAGE_SIZE, "online\n");
 	else
-		return sprintf(buf, "offline\n");
+		return snprintf(buf, PAGE_SIZE, "offline\n");
 }
 static DEVICE_ATTR(status, S_IRUGO, dock_status_show, NULL);
 
@@ -856,7 +858,7 @@ static ssize_t vbus_status_show(struct device *dev,
 	
 	vbus_in = level;
 	CABLE_INFO("%s: vbus state = %d\n", __func__, vbus_in);
-	return sprintf(buf, "%d\n", vbus_in);
+	return snprintf(buf, PAGE_SIZE, "%d\n", vbus_in);
 }
 static DEVICE_ATTR(vbus, S_IRUGO, vbus_status_show, NULL);
 static ssize_t USB_ID_status_show(struct device *dev,
@@ -867,7 +869,7 @@ static ssize_t USB_ID_status_show(struct device *dev,
 	id =  cable_get_usb_id_level();
 
 	CABLE_INFO("%s: USB_ID_status = %d\n", __func__, id);
-	return sprintf(buf, "%d\n", id);
+	return snprintf(buf, PAGE_SIZE, "%d\n", id);
 }
 static DEVICE_ATTR(USB_ID_status, S_IRUGO, USB_ID_status_show, NULL);
 #ifdef CONFIG_CABLE_DETECT_ACCESSORY
@@ -879,7 +881,7 @@ static ssize_t adc_status_show(struct device *dev,
 	adc = cable_detect_get_adc();
 
 	CABLE_INFO("%s: ADC = %d\n", __func__, adc);
-	return sprintf(buf, "%d\n", adc);
+	return snprintf(buf, PAGE_SIZE, "%d\n", adc);
 }
 static DEVICE_ATTR(adc, S_IRUGO, adc_status_show, NULL);
 
@@ -937,7 +939,7 @@ static DEVICE_ATTR(unlock_audio_dock_lock, S_IWUSR, NULL, unlock_audio_dock_lock
 static ssize_t retry_times_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%d\n", ADC_RETRY);
+	return snprintf(buf, PAGE_SIZE, "%d\n", ADC_RETRY);
 }
 
 
@@ -1208,6 +1210,19 @@ int usb_get_connect_type(void)
 	struct cable_detect_info*pInfo = &the_cable_info;
 	return pInfo->connect_type;
 }
+
+extern int usb_type_event_notify(int result);
+void usb_set_connect_type(int _connect_type)
+{
+	struct cable_detect_info*pInfo = &the_cable_info;
+
+	
+	usb_type_event_notify(_connect_type);
+	pInfo->connect_type = _connect_type;
+
+	return;
+}
+
 void cable_status_notifier_func(int cable_type)
 {
 	struct cable_detect_info*pInfo = &the_cable_info;

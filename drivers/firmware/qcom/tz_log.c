@@ -160,6 +160,17 @@ struct htc_tzlog_dev {
 };
 
 static struct htc_tzlog_dev *htc_tzlog;
+
+typedef enum
+{
+	HTC_TZDBG_STATS_TZ = 0,
+	HTC_TZDBG_STATS_QSEE,
+	HTC_TZDBG_STATS_MAX
+} htc_tzdbg_disp_stats_type;
+
+char *htc_tzlog_buffer;
+
+extern int qseecom_qsee_version(void);
 #endif
 static struct tzdbg_log_t *g_qsee_log;
 static uint32_t debug_rw_buf_size;
@@ -416,7 +427,7 @@ static int _disp_tz_htc_log_stats(char __user *ubuf, size_t count, loff_t *offp)
 	uint32_t r_cursor, w_cursor;
 	int ret;
 
-	if (buf != 0 && (count < MSM_TZLOG_SIZE)) {
+	if (buf != 0 && (count <= MSM_TZLOG_SIZE)) {
 		
 		r_cursor = readl_relaxed(pr_cursor);
 		w_cursor = readl_relaxed(pw_cursor);
@@ -472,6 +483,148 @@ static int _disp_tz_htc_log_stats(char __user *ubuf, size_t count, loff_t *offp)
 
 	return 0;
 }
+
+static int htc_buffer_offset;
+static int htc_buffer_size;
+
+static int _htc_disp_buffer_log(char __user *buf, size_t count, loff_t *offp)
+{
+	int ret, len = 0;
+
+	if (*offp == htc_buffer_offset) {
+		len = htc_buffer_size - htc_buffer_offset;
+
+		if (count >= len) {
+			ret = copy_to_user(buf, htc_tzlog_buffer + htc_buffer_offset, len);
+			*offp = 0;
+			htc_buffer_offset = 0;
+			htc_buffer_size = 0;
+		} else {
+			len = count;
+			ret = copy_to_user(buf, htc_tzlog_buffer + htc_buffer_offset, len);
+			htc_buffer_offset += count;
+			*offp = htc_buffer_offset;
+		}
+	}
+
+	return len;
+}
+
+static int _htc_disp_tz_log(char __user *buf, size_t count, loff_t *offp)
+{
+	int len;
+
+	if (*offp == 0)
+	{
+		struct tzdbg_log_t *tzbsp_log;
+
+		len = snprintf(htc_tzlog_buffer, (MSM_TZLOG_SIZE - 1),
+				"\r\n----- tz log -----\r\n");
+
+		tzbsp_log = (struct tzdbg_log_t *)((unsigned char *)tzdbg.diag_buf +
+					tzdbg.diag_buf->ring_off -
+					offsetof(struct tzdbg_log_t, log_buf));
+
+		if (tzbsp_log->log_pos.wrap) {
+			memcpy(htc_tzlog_buffer + len, tzbsp_log->log_buf + tzbsp_log->log_pos.offset,
+					tzdbg.diag_buf->ring_len - tzbsp_log->log_pos.offset);
+			memcpy(htc_tzlog_buffer + len + tzdbg.diag_buf->ring_len - tzbsp_log->log_pos.offset,
+					tzbsp_log->log_buf, tzbsp_log->log_pos.offset);
+			len += tzdbg.diag_buf->ring_len;
+		} else {
+			memcpy(htc_tzlog_buffer + len, tzbsp_log->log_buf, tzbsp_log->log_pos.offset);
+			len += tzbsp_log->log_pos.offset;
+		}
+
+		htc_buffer_offset = 0;
+		htc_buffer_size = len;
+	}
+
+	len = _htc_disp_buffer_log(buf, count, offp);
+
+	return len;
+}
+
+static int _htc_disp_qsee_log(char __user *buf, size_t count, loff_t *offp)
+{
+	int len;
+
+	if (*offp == 0)
+	{
+		uint8_t *log_buf;
+		int log_len;
+
+		len = snprintf(htc_tzlog_buffer, (MSM_TZLOG_SIZE - 1),
+				"\r\n----- qsee log -----\r\n");
+
+		log_buf = (uint8_t *)g_qsee_log->log_buf;
+		log_len = QSEE_LOG_BUF_SIZE - sizeof(struct tzdbg_log_pos_t);
+
+		if (g_qsee_log->log_pos.wrap) {
+			memcpy(htc_tzlog_buffer + len, log_buf + g_qsee_log->log_pos.offset,
+					log_len - g_qsee_log->log_pos.offset);
+			memcpy(htc_tzlog_buffer + len + log_len - g_qsee_log->log_pos.offset,
+					log_buf, g_qsee_log->log_pos.offset);
+			len += log_len;
+		} else {
+			memcpy(htc_tzlog_buffer + len, log_buf, g_qsee_log->log_pos.offset);
+			len += g_qsee_log->log_pos.offset;
+		}
+
+		htc_buffer_offset = 0;
+		htc_buffer_size = len;
+	}
+
+	len = _htc_disp_buffer_log(buf, count, offp);
+
+	return len;
+}
+
+static int __htc_disp_log_end(void)
+{
+	int len;
+
+	len = snprintf(htc_tzlog_buffer, (MSM_TZLOG_SIZE - 1),
+		"\r\n--------------------\r\n\r\n");
+
+    return len;
+}
+
+static int _disp_tz_htc_log_stats_40(char __user *buf, size_t count, loff_t *offp)
+{
+	static htc_tzdbg_disp_stats_type flag = HTC_TZDBG_STATS_TZ;
+	int len, ret;
+
+	if (!htc_tzlog_buffer)
+		return 0;
+
+	switch (flag) {
+		case HTC_TZDBG_STATS_TZ:
+			len = _htc_disp_tz_log(buf, count, offp);
+			if (*offp == 0)
+				flag++;
+			break;
+
+		case HTC_TZDBG_STATS_QSEE:
+			len = _htc_disp_qsee_log(buf, count, offp);
+			if (*offp == 0)
+				flag++;
+			break;
+
+		case HTC_TZDBG_STATS_MAX:
+			len = __htc_disp_log_end();
+			*offp += len;
+			flag++;
+			ret = copy_to_user(buf, htc_tzlog_buffer, len);
+			break;
+
+		default:
+			flag = 0;
+			return 0;
+	}
+
+	return len;
+}
 #endif
 
 static int _disp_qsee_log_stats(size_t count)
@@ -522,7 +675,10 @@ static ssize_t tzdbgfs_read(struct file *file, char __user *buf,
 		break;
 #ifdef CONFIG_HTC_TZ_LOG
 	case TZDBG_HTCLOG:
-		return _disp_tz_htc_log_stats(buf, count, offp);
+		if (qseecom_qsee_version() < 0x1000000)	
+			return _disp_tz_htc_log_stats(buf, count, offp);
+		else
+			return _disp_tz_htc_log_stats_40(buf, count, offp);
 #endif
 	default:
 		break;
@@ -778,6 +934,12 @@ static int tz_log_probe(struct platform_device *pdev)
 
 	
 	
+
+	
+	htc_tzlog_buffer = kzalloc(MSM_TZLOG_SIZE, GFP_KERNEL);
+	if (!htc_tzlog_buffer) {
+		pr_err("%s: Can't Allocate memory: htc_tzlog_buffer\n", __func__);
+	}
 #endif
 
 	if (tzdbgfs_init(pdev))

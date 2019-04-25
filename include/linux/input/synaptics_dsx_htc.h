@@ -42,6 +42,8 @@ struct synaptics_rmi4_config {
 	uint8_t glove_mode_setting[10];
 	uint16_t length;
 	uint8_t  config[SYN_CONFIG_SIZE];
+	uint8_t tp_lcm_src;
+	const char *disp_panel;
 };
 
 struct synaptics_dsx_board_data {
@@ -75,6 +77,7 @@ struct synaptics_dsx_board_data {
 	uint8_t update_feature;
 	uint8_t support_glove;
 	uint8_t support_cover;
+	uint8_t setting_group;
 	uint32_t hall_block_touch_time;
 	int config_num;
 	struct synaptics_rmi4_config *config_table;

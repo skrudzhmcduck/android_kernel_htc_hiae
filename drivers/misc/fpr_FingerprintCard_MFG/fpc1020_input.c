@@ -20,15 +20,24 @@
 #endif
 
 
+/* -------------------------------------------------------------------- */
+/* function prototypes							*/
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_lpm_setup(fpc1020_data_t *fpc1020);
 
 static int fpc1020_wait_finger_present_lpm(fpc1020_data_t *fpc1020);
 
 
-#define FPC1020_KEY_FINGER_PRESENT	KEY_WAKEUP	
+/* -------------------------------------------------------------------- */
+/* driver constants							*/
+/* -------------------------------------------------------------------- */
+#define FPC1020_KEY_FINGER_PRESENT	KEY_WAKEUP	/* 143*/
 
 #define FPC1020_INPUT_POLL_TIME_MS	1000u
 
+/* -------------------------------------------------------------------- */
+/* function definitions							*/
+/* -------------------------------------------------------------------- */
 int fpc1020_input_init(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -62,6 +71,7 @@ int fpc1020_input_init(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 void fpc1020_input_destroy(fpc1020_data_t *fpc1020)
 {
 	dev_dbg(&fpc1020->spi->dev, "%s\n", __func__);
@@ -71,6 +81,7 @@ void fpc1020_input_destroy(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_input_enable(fpc1020_data_t *fpc1020, bool enabled)
 {
 	dev_dbg(&fpc1020->spi->dev, "%s\n", __func__);
@@ -81,6 +92,7 @@ int fpc1020_input_enable(fpc1020_data_t *fpc1020, bool enabled)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_input_task(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -104,6 +116,7 @@ int fpc1020_input_task(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_lpm_setup(fpc1020_data_t *fpc1020)
 {
 	const int mux = FPC1020_MAX_ADC_SETTINGS - 1;
@@ -137,6 +150,7 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_wait_finger_present_lpm(fpc1020_data_t *fpc1020)
 {
 	const int lpm_poll_delay_ms = FPC1020_INPUT_POLL_TIME_MS;
@@ -188,7 +202,7 @@ static int fpc1020_wait_finger_present_lpm(fpc1020_data_t *fpc1020)
 			wakeup_center = (zone_raw & zmask_5) ||
 					(zone_raw & zmask_6);
 
-			
+			/* Todo: refined extended processing ? */
 			wakeup_ext = ((zone_raw & zmask_ext) == zmask_ext);
 
 		} else {
@@ -221,4 +235,5 @@ static int fpc1020_wait_finger_present_lpm(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 

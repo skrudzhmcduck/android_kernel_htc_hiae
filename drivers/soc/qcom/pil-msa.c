@@ -29,17 +29,21 @@
 #include "pil-q6v5.h"
 #include "pil-msa.h"
 
+/* Q6 Register Offsets */
 #define QDSP6SS_RST_EVB			0x010
 #define QDSP6SS_DBG_CFG			0x018
 
+/* AXI Halting Registers */
 #define MSS_Q6_HALT_BASE		0x180
 #define MSS_MODEM_HALT_BASE		0x200
 #define MSS_NC_HALT_BASE		0x280
 
+/* RMB Status Register Values */
 #define STATUS_PBL_SUCCESS		0x1
 #define STATUS_XPU_UNLOCKED		0x1
 #define STATUS_XPU_UNLOCKED_SCRIBBLED	0x2
 
+/* PBL/MBA interface registers */
 #define RMB_MBA_IMAGE			0x00
 #define RMB_PBL_STATUS			0x04
 #define RMB_MBA_COMMAND			0x08
@@ -60,6 +64,7 @@
 #define STATUS_AUTH_COMPLETE		0x4
 #define STATUS_MBA_UNLOCKED		0x6
 
+/* External BHS */
 #define EXTERNAL_BHS_ON			BIT(0)
 #define EXTERNAL_BHS_STATUS		BIT(4)
 #define BHS_TIMEOUT_US			50
@@ -68,6 +73,9 @@
 #define MSS_RESTART_ID			0xA
 
 #define MSS_MAGIC			0XAABADEAD
+enum scm_cmd {
+	PAS_MEM_SETUP_CMD = 2,
+};
 
 static int pbl_mba_boot_timeout_ms = 1000;
 module_param(pbl_mba_boot_timeout_ms, int, S_IRUGO | S_IWUSR);
@@ -75,9 +83,11 @@ module_param(pbl_mba_boot_timeout_ms, int, S_IRUGO | S_IWUSR);
 static int modem_auth_timeout_ms = 10000;
 module_param(modem_auth_timeout_ms, int, S_IRUGO | S_IWUSR);
 
+/* If set to 0xAABADEAD, MBA failures trigger a kernel panic */
 static uint modem_trigger_panic;
 module_param(modem_trigger_panic, uint, S_IRUGO | S_IWUSR);
 
+/* To set the modem debug cookie in DBG_CFG register for debugging */
 static uint modem_dbg_cfg;
 module_param(modem_dbg_cfg, uint, S_IRUGO | S_IWUSR);
 
@@ -217,7 +227,7 @@ static int pil_msa_wait_for_mba_ready(struct q6v5_data *drv)
 	int ret;
 	u32 status;
 
-	
+	/* Wait for PBL completion. */
 	ret = readl_poll_timeout(drv->rmb_base + RMB_PBL_STATUS, status,
 		status != 0, POLL_INTERVAL_US, pbl_mba_boot_timeout_ms * 1000);
 	if (ret) {
@@ -229,7 +239,7 @@ static int pil_msa_wait_for_mba_ready(struct q6v5_data *drv)
 		return -EINVAL;
 	}
 
-	
+	/* Wait for MBA completion. */
 	ret = readl_poll_timeout(drv->rmb_base + RMB_MBA_STATUS, status,
 		status != 0, POLL_INTERVAL_US, pbl_mba_boot_timeout_ms * 1000);
 	if (ret) {
@@ -265,6 +275,18 @@ int pil_mss_shutdown(struct pil_desc *pil)
 		pil_q6v5_halt_axi_port(pil, drv->axi_halt_mss);
 	if (drv->axi_halt_nc)
 		pil_q6v5_halt_axi_port(pil, drv->axi_halt_nc);
+
+	/*
+	 * Software workaround to avoid high MX current during LPASS/MSS
+	 * restart.
+	 */
+	if (drv->mx_spike_wa && drv->ahb_clk_vote) {
+		ret = clk_prepare_enable(drv->ahb_clk);
+		if (!ret)
+			assert_clamps(pil);
+		else
+			dev_err(pil->dev, "error turning ON AHB clock\n");
+	}
 
 	ret = pil_mss_restart_reg(drv, 1);
 
@@ -302,6 +324,8 @@ int __pil_mss_deinit_image(struct pil_desc *pil, bool err_path)
 	if (q6_drv->ahb_clk_vote)
 		clk_disable_unprepare(q6_drv->ahb_clk);
 
+	/* In case of any failure where reclaim MBA memory
+	 * could not happen, free the memory here */
 	if (drv->q6->mba_virt) {
 		dma_free_attrs(&drv->mba_mem_dev, drv->q6->mba_size,
 				drv->q6->mba_virt, drv->q6->mba_phys,
@@ -364,6 +388,44 @@ void pil_mss_remove_proxy_votes(struct pil_desc *pil)
 	regulator_set_voltage(drv->vreg_mx, 0, INT_MAX);
 }
 
+static int pil_mss_mem_setup(struct pil_desc *pil,
+					phys_addr_t addr, size_t size)
+{
+	struct modem_data *md = dev_get_drvdata(pil->dev);
+
+	struct pas_init_image_req {
+		u32	proc;
+		u32	start_addr;
+		u32	len;
+	} request;
+	u32 scm_ret = 0;
+	int ret;
+	struct scm_desc desc = {0};
+
+	if (!md->subsys_desc.pil_mss_memsetup)
+		return 0;
+
+	request.proc = md->pas_id;
+	request.start_addr = addr;
+	request.len = size;
+
+	if (!is_scm_armv8()) {
+		ret = scm_call(SCM_SVC_PIL, PAS_MEM_SETUP_CMD, &request,
+				sizeof(request), &scm_ret, sizeof(scm_ret));
+	} else {
+		desc.args[0] = md->pas_id;
+		desc.args[1] = addr;
+		desc.args[2] = size;
+		desc.arginfo = SCM_ARGS(3);
+		ret = scm_call2(SCM_SIP_FNID(SCM_SVC_PIL, PAS_MEM_SETUP_CMD),
+				&desc);
+		scm_ret = desc.ret[0];
+	}
+	if (ret)
+		return ret;
+	return scm_ret;
+}
+
 static int pil_mss_reset(struct pil_desc *pil)
 {
 	struct q6v5_data *drv = container_of(pil, struct q6v5_data, desc);
@@ -373,11 +435,15 @@ static int pil_mss_reset(struct pil_desc *pil)
 	if (drv->mba_phys)
 		start_addr = drv->mba_phys;
 
+	/*
+	 * Bring subsystem out of reset and enable required
+	 * regulators and clocks.
+	 */
 	ret = pil_mss_power_up(drv);
 	if (ret)
 		goto err_power;
 
-	
+	/* Deassert reset to subsystem and wait for propagation */
 	ret = pil_mss_restart_reg(drv, 0);
 	if (ret)
 		goto err_restart;
@@ -389,16 +455,20 @@ static int pil_mss_reset(struct pil_desc *pil)
 	if (modem_dbg_cfg)
 		writel_relaxed(modem_dbg_cfg, drv->reg_base + QDSP6SS_DBG_CFG);
 
-	
+	/* Program Image Address */
 	if (drv->self_auth) {
 		writel_relaxed(start_addr, drv->rmb_base + RMB_MBA_IMAGE);
+		/*
+		 * Ensure write to RMB base occurs before reset
+		 * is released.
+		 */
 		mb();
 	} else {
 		writel_relaxed((start_addr >> 4) & 0x0FFFFFF0,
 				drv->reg_base + QDSP6SS_RST_EVB);
 	}
 
-	
+	/* Program DP Address */
 	if (drv->dp_virt) {
 		writel_relaxed(drv->dp_phys, drv->rmb_base +
 			       RMB_PMI_CODE_START);
@@ -415,7 +485,7 @@ static int pil_mss_reset(struct pil_desc *pil)
 	if (ret)
 		goto err_q6v5_reset;
 
-	
+	/* Wait for MBA to start. Check for PBL and MBA errors while waiting. */
 	if (drv->self_auth) {
 		ret = pil_msa_wait_for_mba_ready(drv);
 		if (ret)
@@ -447,9 +517,9 @@ int pil_mss_reset_load_mba(struct pil_desc *pil)
 	const struct firmware *fw, *dp_fw;
 	char fw_name_legacy[10] = "mba.b00";
 	char fw_name[10] = "mba.mbn";
-#if 0 
+#if 0 /*+SSD-RIL: we don't need to load MSADP image on MSM8952 */
 	char *dp_name = "msadp";
-#endif 
+#endif /*-SSD-RIL: we don't need to load MSADP image on MSM8952 */
 	char *fw_name_p;
 	void *mba_virt;
 	dma_addr_t mba_phys, mba_phys_end;
@@ -457,7 +527,7 @@ int pil_mss_reset_load_mba(struct pil_desc *pil)
 	const u8 *data;
 
 	fw_name_p = drv->non_elf_image ? fw_name_legacy : fw_name;
-	
+	/* Load and authenticate mba image */
 	ret = request_firmware(&fw, fw_name_p, pil->dev);
 	if (ret) {
 		dev_err(pil->dev, "Failed to locate %s\n",
@@ -485,7 +555,7 @@ int pil_mss_reset_load_mba(struct pil_desc *pil)
 
 	dev_info(pil->dev, "MBA: loading from %pa to %pa\n", &mba_phys,
 								&mba_phys_end);
-	
+	/* Load the MBA image into memory */
 	data = fw ? fw->data : NULL;
 	if (!data) {
 		dev_err(pil->dev, "MBA data is NULL\n");
@@ -493,13 +563,21 @@ int pil_mss_reset_load_mba(struct pil_desc *pil)
 		goto err_mba_data;
 	}
 	count = fw->size;
+
+	if (count > SZ_1M) {
+		dev_err(pil->dev, "%s fw image loading into memory is failed due to fw size overflow\n",
+			__func__);
+		ret = -EINVAL;
+		goto err_mba_data;
+	}
+
 	memcpy(mba_virt, data, count);
 	wmb();
 
-#if 1 
+#if 1 /*+SSD-RIL: we don't need to load MSADP image on MSM8952 */
         drv->dp_virt = NULL;
 #else
-	
+	/* Load modem debug policy */
 	ret = request_firmware(&dp_fw, dp_name, pil->dev);
 	if (ret) {
 		drv->dp_virt = NULL;
@@ -526,10 +604,10 @@ int pil_mss_reset_load_mba(struct pil_desc *pil)
 						 &mba_phys, &mba_phys_end);
 
 		memcpy(mba_virt, dp_fw->data, dp_fw->size);
-		
+		/* Ensure memcpy is done before powering up modem */
 		wmb();
 	}
-#endif 
+#endif /*-SSD-RIL: we don't need to load MSADP image on MSM8952 */
 
 	ret = pil_mss_reset(pil);
 	if (ret) {
@@ -548,11 +626,11 @@ err_mss_reset:
 		dma_free_attrs(&md->mba_mem_dev,  dp_fw->size, drv->dp_virt,
 				drv->dp_phys, &md->attrs_dma);
 
-#if 0 
+#if 0 /*+SSD-RIL: we don't need to load MSADP image on MSM8952 */
 err_invalid_fw:
 	if (dp_fw)
 		release_firmware(dp_fw);
-#endif 
+#endif /*-SSD-RIL: we don't need to load MSADP image on MSM8952 */
 
 err_mba_data:
 	dma_free_attrs(&md->mba_mem_dev, drv->mba_size, drv->mba_virt,
@@ -577,7 +655,7 @@ static int pil_msa_auth_modem_mdt(struct pil_desc *pil, const u8 *metadata,
 	drv->mba_mem_dev.coherent_dma_mask =
 		DMA_BIT_MASK(sizeof(dma_addr_t) * 8);
 	dma_set_attr(DMA_ATTR_STRONGLY_ORDERED, &attrs);
-	
+	/* Make metadata physically contiguous and 4K aligned. */
 	mdata_virt = dma_alloc_attrs(&drv->mba_mem_dev, size, &mdata_phys,
 					GFP_KERNEL, &attrs);
 	if (!mdata_virt) {
@@ -587,13 +665,13 @@ static int pil_msa_auth_modem_mdt(struct pil_desc *pil, const u8 *metadata,
 		goto fail;
 	}
 	memcpy(mdata_virt, metadata, size);
-	
+	/* wmb() ensures copy completes prior to starting authentication. */
 	wmb();
 
-	
+	/* Initialize length counter to 0 */
 	writel_relaxed(0, drv->rmb_base + RMB_PMI_CODE_LENGTH);
 
-	
+	/* Pass address of meta-data to the MBA and perform authentication */
 	writel_relaxed(mdata_phys, drv->rmb_base + RMB_PMI_META_DATA);
 	writel_relaxed(CMD_META_DATA_READY, drv->rmb_base + RMB_MBA_COMMAND);
 	ret = readl_poll_timeout(drv->rmb_base + RMB_MBA_STATUS, status,
@@ -649,12 +727,12 @@ static int pil_msa_mba_verify_blob(struct pil_desc *pil, phys_addr_t phy_addr,
 	s32 status;
 	u32 img_length = readl_relaxed(drv->rmb_base + RMB_PMI_CODE_LENGTH);
 
-	
+	/* Begin image authentication */
 	if (img_length == 0) {
 		writel_relaxed(phy_addr, drv->rmb_base + RMB_PMI_CODE_START);
 		writel_relaxed(CMD_LOAD_READY, drv->rmb_base + RMB_MBA_COMMAND);
 	}
-	
+	/* Increment length counter */
 	img_length += size;
 	writel_relaxed(img_length, drv->rmb_base + RMB_PMI_CODE_LENGTH);
 
@@ -675,7 +753,7 @@ static int pil_msa_mba_auth(struct pil_desc *pil)
 	int ret;
 	s32 status;
 
-	
+	/* Wait for all segments to be authenticated or an error to occur */
 	ret = readl_poll_timeout(drv->rmb_base + RMB_MBA_STATUS, status,
 			status == STATUS_AUTH_COMPLETE || status < 0,
 			50, modem_auth_timeout_ms * 1000);
@@ -688,7 +766,7 @@ static int pil_msa_mba_auth(struct pil_desc *pil)
 
 	if (drv->q6) {
 		if (drv->q6->mba_virt) {
-			
+			/* Reclaim MBA memory. */
 			dma_free_attrs(&drv->mba_mem_dev, drv->q6->mba_size,
 					drv->q6->mba_virt, drv->q6->mba_phys,
 					&drv->attrs_dma);
@@ -696,7 +774,7 @@ static int pil_msa_mba_auth(struct pil_desc *pil)
 		}
 
 		if (drv->q6->dp_virt) {
-			
+			/* Reclaim Modem DP memory. */
 			dma_free_attrs(&drv->mba_mem_dev, drv->q6->dp_size,
 					drv->q6->dp_virt, drv->q6->dp_phys,
 					&drv->attrs_dma);
@@ -711,6 +789,10 @@ static int pil_msa_mba_auth(struct pil_desc *pil)
 	return ret;
 }
 
+/*
+ * To be used only if self-auth is disabled, or if the
+ * MBA image is loaded as segments and not in init_image.
+ */
 struct pil_reset_ops pil_msa_mss_ops = {
 	.proxy_vote = pil_mss_make_proxy_votes,
 	.proxy_unvote = pil_mss_remove_proxy_votes,
@@ -718,16 +800,26 @@ struct pil_reset_ops pil_msa_mss_ops = {
 	.shutdown = pil_mss_shutdown,
 };
 
+/*
+ * To be used if self-auth is enabled and the MBA is to be loaded
+ * in init_image and the modem headers are also to be authenticated
+ * in init_image. Modem segments authenticated in auth_and_reset.
+ */
 struct pil_reset_ops pil_msa_mss_ops_selfauth = {
 	.init_image = pil_msa_mss_reset_mba_load_auth_mdt,
 	.proxy_vote = pil_mss_make_proxy_votes,
 	.proxy_unvote = pil_mss_remove_proxy_votes,
+	.mem_setup = pil_mss_mem_setup,
 	.verify_blob = pil_msa_mba_verify_blob,
 	.auth_and_reset = pil_msa_mba_auth,
 	.deinit_image = pil_mss_deinit_image,
 	.shutdown = pil_mss_shutdown,
 };
 
+/*
+ * To be used if the modem headers are to be authenticated
+ * in init_image, and the modem segments in auth_and_reset.
+ */
 struct pil_reset_ops pil_msa_femto_mba_ops = {
 	.init_image = pil_msa_auth_modem_mdt,
 	.verify_blob = pil_msa_mba_verify_blob,

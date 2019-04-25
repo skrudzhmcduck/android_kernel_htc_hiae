@@ -428,15 +428,12 @@ int add_or_remove_port(struct sock *sk, int add_or_remove)
 	src = inet->inet_rcv_saddr;
 	srcp = ntohs(inet->inet_sport);
 
-	wake_lock(&port_suspend_lock);
 	if (!packet_filter_flag) {
-		wake_unlock(&port_suspend_lock);
 		return 0;
 	}
 	
 	if (port_list == NULL) {
 		if(allocate_port_list()!=0) {
-			wake_unlock(&port_suspend_lock);
 			return 0;
 		}
 	}
@@ -449,13 +446,13 @@ int add_or_remove_port(struct sock *sk, int add_or_remove)
 		sk->sk_socket->state == SS_CONNECTED) {
 			PF_LOG_INFO("[Port list] can't remove port:[%d]\n", srcp);
 			port_list_dump_data(sk);
-			wake_unlock(&port_suspend_lock);
 			return 0;
 	}
 
 	
 	if (sk->sk_protocol == IPPROTO_TCP && src != 0x0100007F && srcp != 0) {
 		int err = 0;
+		wake_lock(&port_suspend_lock);
 		mutex_lock(&port_lock);
 		PF_LOG_INFO("[Port list] TCP port#: [%d]\n", srcp);
 
@@ -479,11 +476,13 @@ int add_or_remove_port(struct sock *sk, int add_or_remove)
 			update_port_list();
 
 		mutex_unlock(&port_lock);
+		wake_unlock(&port_suspend_lock);
 	}
 
 #ifdef PACKET_FILTER_UDP
 	
 	if (sk->sk_protocol == IPPROTO_UDP && src != 0x0100007F && srcp != 0) {
+		wake_lock(&port_suspend_lock);
 		mutex_lock(&port_lock);
 		port_updated = 0;
 		if (add_or_remove)
@@ -493,6 +492,7 @@ int add_or_remove_port(struct sock *sk, int add_or_remove)
 		if(port_updated)
 			update_port_list();
 		mutex_unlock(&port_lock);
+		wake_unlock(&port_suspend_lock);
 	}
 #endif
 
@@ -505,19 +505,17 @@ int update_port_list_charging_state(int enable)
 {
 	size_t count = 0;
 
-	wake_lock(&port_suspend_lock);
 	if (!packet_filter_flag) {
-		wake_unlock(&port_suspend_lock);
 		return 0;
 	}
 
 	if (port_list == NULL) {
 		PF_LOG_INFO("[Port list] port_list is NULL.\n");
-		wake_unlock(&port_suspend_lock);
 		return 0;
 	}
 
 	usb_enable = enable;
+	wake_lock(&port_suspend_lock);
 	mutex_lock(&port_lock);
 	if (usb_enable) {
 		port_list_enable(0);
@@ -557,11 +555,11 @@ static int __init port_list_init(void)
 	wake_lock_init(&port_suspend_lock, WAKE_LOCK_SUSPEND, "port_list");
 	mutex_init(&port_lock);
 
-	PF_LOG_INFO("[Port list] init()\n");
-
 	
 	if (get_kernel_flag() & KERNEL_FLAG_RIL_DBG_MEMCPY)
 		ril_debug_flag = 1;
+
+	PF_LOG_INFO("[Port list] init()\n");
 
 	
 	memset(&curr_port_list, 0, sizeof(curr_port_list));

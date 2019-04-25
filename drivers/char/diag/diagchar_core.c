@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -103,7 +103,7 @@ module_param(poolsize_qsc_usb, uint, 0);
 #endif
 
 static unsigned int max_clients = 15;
-static unsigned int threshold_client_limit = 30;
+static unsigned int threshold_client_limit = 50;
 module_param(max_clients, uint, 0);
 static struct timer_list drain_timer;
 static int timer_in_progress;
@@ -432,8 +432,8 @@ static int diagchar_open(struct inode *inode, struct file *file)
 				diag_add_client(i, file);
 			} else {
 				mutex_unlock(&driver->diagchar_mutex);
-				pr_alert("Max client limit for DIAG reached\n");
-				DIAG_INFO("Cannot open handle %s"
+				pr_err_ratelimited("diag: Max client limit for DIAG reached\n");
+				DIAG_INFO("diag: Cannot open handle %s"
 					   " %d", current->comm, current->tgid);
 				for (i = 0; i < driver->num_clients; i++)
 					DIAG_WARNING("%d) %s PID=%d", i, driver->
@@ -460,7 +460,7 @@ static int diagchar_open(struct inode *inode, struct file *file)
 fail:
 	mutex_unlock(&driver->diagchar_mutex);
 	driver->num_clients--;
-	pr_alert("diag: Insufficient memory for new client");
+	pr_err_ratelimited("diag: Insufficient memory for new client");
 	return -ENOMEM;
 }
 
@@ -556,21 +556,23 @@ static int diag_remove_client_entry(struct file *file)
 
 	mutex_lock(&driver->diag_file_mutex);
 	if (!file) {
-		DIAG_LOG(DIAG_DEBUG_USERSPACE, "Invalid file pointer \n");
+		DIAG_LOG(DIAG_DEBUG_USERSPACE, "Invalid file pointer\n");
 		mutex_unlock(&driver->diag_file_mutex);
 		return -ENOENT;
 	}
 	if (!(file->private_data)) {
-		DIAG_LOG(DIAG_DEBUG_USERSPACE, "Invalid private data \n");
+		DIAG_LOG(DIAG_DEBUG_USERSPACE, "Invalid private data\n");
 		mutex_unlock(&driver->diag_file_mutex);
 		return -EINVAL;
 	}
 
 	diagpriv_data = file->private_data;
 
+	mutex_lock(&driver->dci_mutex);
 	dci_entry = dci_lookup_client_entry_pid(current->tgid);
 	if (dci_entry)
 		diag_dci_deinit_client(dci_entry);
+	mutex_unlock(&driver->dci_mutex);
 
 	diag_close_logging_process(current->tgid);
 
@@ -722,8 +724,10 @@ static void diag_cmd_invalidate_polling(int change_flag)
 	struct diag_cmd_reg_t *item = NULL;
 
 	if (change_flag == DIAG_CMD_ADD) {
-		if (driver->polling_reg_flag)
+		if (driver->polling_reg_flag) {
+			DIAG_DBUG("diag: exiting function %s",__func__);
 			return;
+		}
 	}
 
 	driver->polling_reg_flag = 0;
@@ -1094,7 +1098,7 @@ static int diag_process_userspace_remote(int proc, void *buf, int len)
 	int bridge_index = proc - 1;
 
 	if (!buf || len < 0) {
-		pr_err("diag: Invalid input in %s, buf: %p, len: %d\n",
+		pr_err("diag: Invalid input in %s, buf: %pK, len: %d\n",
 		       __func__, buf, len);
 		return -EINVAL;
 	}
@@ -1277,7 +1281,7 @@ static int diag_switch_logging(const int requested_mode)
 	if (new_mode == current_mode) {
 		if (requested_mode != MEMORY_DEVICE_MODE ||
 		    driver->real_time_mode) {
-			pr_info_ratelimited("diag: Already in logging mode change requested, mode: %d\n",
+			DIAG_INFO("diag: Already in logging mode change requested, mode: %d\n",
 					    current_mode);
 		}
 		DIAG_LOG(DIAG_DEBUG_USERSPACE, "no mode change required\n");
@@ -1312,10 +1316,7 @@ static int diag_switch_logging(const int requested_mode)
 	}
 	driver->logging_mode = new_mode;
 
-	pr_info("diag: Logging switched from %d to %d mode\n",
-		current_mode, new_mode);
-	DIAG_LOG(DIAG_DEBUG_USERSPACE,
-		 "logging switched from %d to %d mode\n",
+	DIAG_INFO("logging switched from %d to %d mode\n",
 		 current_mode, new_mode);
 
 	if (new_mode != MEMORY_DEVICE_MODE) {
@@ -1747,37 +1748,57 @@ long diagchar_compat_ioctl(struct file *filp,
 		result = diag_ioctl_dci_reg(ioarg);
 		break;
 	case DIAG_IOCTL_DCI_DEINIT:
+		mutex_lock(&driver->dci_mutex);
 		if (copy_from_user((void *)&client_id, (void __user *)ioarg,
-			sizeof(int)))
+			sizeof(int))) {
+			mutex_unlock(&driver->dci_mutex);
 			return -EFAULT;
+		}
 		dci_client = diag_dci_get_client_entry(client_id);
-		if (!dci_client)
+		if (!dci_client) {
+			mutex_unlock(&driver->dci_mutex);
 			return DIAG_DCI_NOT_SUPPORTED;
+		}
 		result = diag_dci_deinit_client(dci_client);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_DCI_SUPPORT:
 		result = diag_ioctl_dci_support(ioarg);
 		break;
 	case DIAG_IOCTL_DCI_HEALTH_STATS:
+		mutex_lock(&driver->dci_mutex);
 		result = diag_ioctl_dci_health_stats(ioarg);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_DCI_LOG_STATUS:
+		mutex_lock(&driver->dci_mutex);
 		result = diag_ioctl_dci_log_status(ioarg);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_DCI_EVENT_STATUS:
+		mutex_lock(&driver->dci_mutex);
 		result = diag_ioctl_dci_event_status(ioarg);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_DCI_CLEAR_LOGS:
+		mutex_lock(&driver->dci_mutex);
 		if (copy_from_user((void *)&client_id, (void __user *)ioarg,
-			sizeof(int)))
+			sizeof(int))) {
+			mutex_unlock(&driver->dci_mutex);
 			return -EFAULT;
+		}
 		result = diag_dci_clear_log_mask(client_id);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_DCI_CLEAR_EVENTS:
+		mutex_lock(&driver->dci_mutex);
 		if (copy_from_user(&client_id, (void __user *)ioarg,
-			sizeof(int)))
+			sizeof(int))) {
+			mutex_unlock(&driver->dci_mutex);
 			return -EFAULT;
+		}
 		result = diag_dci_clear_event_mask(client_id);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_LSM_DEINIT:
 		result = diag_ioctl_lsm_deinit();
@@ -1797,7 +1818,9 @@ long diagchar_compat_ioctl(struct file *filp,
 			result = 1;
 		break;
 	case DIAG_IOCTL_VOTE_REAL_TIME:
+		mutex_lock(&driver->dci_mutex);
 		result = diag_ioctl_vote_real_time(ioarg);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_GET_REAL_TIME:
 		result = diag_ioctl_get_real_time(ioarg);
@@ -1861,37 +1884,55 @@ long diagchar_ioctl(struct file *filp,
 		result = diag_ioctl_dci_reg(ioarg);
 		break;
 	case DIAG_IOCTL_DCI_DEINIT:
+		mutex_lock(&driver->dci_mutex);
 		if (copy_from_user((void *)&client_id, (void __user *)ioarg,
-			sizeof(int)))
+			sizeof(int))) {
+			mutex_unlock(&driver->dci_mutex);
 			return -EFAULT;
+		}
 		dci_client = diag_dci_get_client_entry(client_id);
-		if (!dci_client)
+		if (!dci_client) {
+			mutex_unlock(&driver->dci_mutex);
 			return DIAG_DCI_NOT_SUPPORTED;
+		}
 		result = diag_dci_deinit_client(dci_client);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_DCI_SUPPORT:
 		result = diag_ioctl_dci_support(ioarg);
 		break;
 	case DIAG_IOCTL_DCI_HEALTH_STATS:
+		mutex_lock(&driver->dci_mutex);
 		result = diag_ioctl_dci_health_stats(ioarg);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_DCI_LOG_STATUS:
+		mutex_lock(&driver->dci_mutex);
 		result = diag_ioctl_dci_log_status(ioarg);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_DCI_EVENT_STATUS:
 		result = diag_ioctl_dci_event_status(ioarg);
 		break;
 	case DIAG_IOCTL_DCI_CLEAR_LOGS:
+		mutex_lock(&driver->dci_mutex);
 		if (copy_from_user((void *)&client_id, (void __user *)ioarg,
-			sizeof(int)))
+			sizeof(int))) {
+			mutex_unlock(&driver->dci_mutex);
 			return -EFAULT;
+		}
 		result = diag_dci_clear_log_mask(client_id);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_DCI_CLEAR_EVENTS:
+		mutex_lock(&driver->dci_mutex);
 		if (copy_from_user(&client_id, (void __user *)ioarg,
-			sizeof(int)))
+			sizeof(int))) {
+			mutex_unlock(&driver->dci_mutex);
 			return -EFAULT;
+		}
 		result = diag_dci_clear_event_mask(client_id);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_LSM_DEINIT:
 		result = diag_ioctl_lsm_deinit();
@@ -1911,7 +1952,9 @@ long diagchar_ioctl(struct file *filp,
 			result = 1;
 		break;
 	case DIAG_IOCTL_VOTE_REAL_TIME:
+		mutex_lock(&driver->dci_mutex);
 		result = diag_ioctl_vote_real_time(ioarg);
+		mutex_unlock(&driver->dci_mutex);
 		break;
 	case DIAG_IOCTL_GET_REAL_TIME:
 		result = diag_ioctl_get_real_time(ioarg);
@@ -1955,7 +1998,7 @@ static int diag_process_apps_data_hdlc(unsigned char *buf, int len,
 	const uint32_t max_encoded_size = ((2 * len) + 3);
 
 	if (!buf || len <= 0) {
-		pr_err("diag: In %s, invalid buf: %p len: %d\n",
+		pr_err("diag: In %s, invalid buf: %pK len: %d\n",
 		       __func__, buf, len);
 		return -EIO;
 	}
@@ -2063,7 +2106,7 @@ static int diag_process_apps_data_non_hdlc(unsigned char *buf, int len,
 	const uint32_t max_pkt_size = sizeof(header) + len + 1;
 
 	if (!buf || len <= 0) {
-		pr_err("diag: In %s, invalid buf: %p len: %d\n",
+		pr_err("diag: In %s, invalid buf: %pK len: %d\n",
 		       __func__, buf, len);
 		return -EIO;
 	}
@@ -2134,7 +2177,7 @@ static int diag_user_process_dci_data(const char __user *buf, int len)
 	unsigned char *user_space_data = NULL;
 
 	if (!buf || len <= 0 || len > diag_mempools[mempool].itemsize) {
-		pr_err_ratelimited("diag: In %s, invalid buf %p len: %d\n",
+		pr_err_ratelimited("diag: In %s, invalid buf %pK len: %d\n",
 				   __func__, buf, len);
 		return -EBADMSG;
 	}
@@ -2166,7 +2209,7 @@ static int diag_user_process_dci_apps_data(const char __user *buf, int len,
 	unsigned char *user_space_data = NULL;
 
 	if (!buf || len <= 0 || len > diag_mempools[mempool].itemsize) {
-		pr_err_ratelimited("diag: In %s, invalid buf %p len: %d\n",
+		pr_err_ratelimited("diag: In %s, invalid buf %pK len: %d\n",
 				   __func__, buf, len);
 		return -EBADMSG;
 	}
@@ -2210,7 +2253,7 @@ static int diag_user_process_raw_data(const char __user *buf, int len)
 	unsigned char *user_space_data = NULL;
 
 	if (!buf || len <= 0 || len > CALLBACK_BUF_SIZE) {
-		pr_err_ratelimited("diag: In %s, invalid buf %p len: %d\n",
+		pr_err_ratelimited("diag: In %s, invalid buf %pK len: %d\n",
 				   __func__, buf, len);
 		return -EBADMSG;
 	}
@@ -2277,7 +2320,7 @@ static int diag_user_process_userspace_data(const char __user *buf, int len)
 	int token_offset = 0;
 
 	if (!buf || len <= 0 || len > USER_SPACE_DATA) {
-		pr_err_ratelimited("diag: In %s, invalid buf %p len: %d\n",
+		pr_err_ratelimited("diag: In %s, invalid buf %pK len: %d\n",
 				   __func__, buf, len);
 		return -EBADMSG;
 	}
@@ -2359,7 +2402,7 @@ static int diag_user_process_apps_data(const char __user *buf, int len,
 	unsigned char *user_space_data = NULL;
 
 	if (!buf || len <= 0 || len > DIAG_MAX_RSP_SIZE) {
-		pr_err_ratelimited("diag: In %s, invalid buf %p len: %d\n",
+		pr_err_ratelimited("diag: In %s, invalid buf %pK len: %d\n",
 				   __func__, buf, len);
 		return -EBADMSG;
 	}
@@ -3067,7 +3110,7 @@ static int __init diagchar_init(void)
 	driver->hdlc_disabled = 0;
 	driver->dci_state = DIAG_DCI_NO_ERROR;
 	setup_timer(&drain_timer, drain_timer_func, 1234);
-	driver->supports_sockets = 0;
+	driver->supports_sockets = 1;
 	driver->time_sync_enabled = 0;
 	driver->uses_time_api = 0;
 	driver->poolsize = poolsize;
@@ -3097,6 +3140,7 @@ static int __init diagchar_init(void)
 	mutex_init(&driver->diag_file_mutex);
 	mutex_init(&driver->delayed_rsp_mutex);
 	mutex_init(&apps_data_mutex);
+	mutex_init(&driver->diagfwd_channel_mutex);
 	init_waitqueue_head(&driver->wait_q);
 	INIT_WORK(&(driver->diag_drain_work), diag_drain_work_fn);
 	INIT_WORK(&(driver->update_user_clients),

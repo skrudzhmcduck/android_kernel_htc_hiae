@@ -13,6 +13,7 @@
 #ifndef __MSM_CLOCKS_8952_H
 #define __MSM_CLOCKS_8952_H
 
+/* clock_gcc controlled clocks */
 
 /* GPLLs */
 #define clk_gpll0_clk_src			0x5933b69f
@@ -20,6 +21,7 @@
 #define clk_gpll0_out_main			0x850fecec
 #define clk_gpll0_out_aux			0x64e55d63
 #define clk_gpll0_misc				0xe06ee816
+#define clk_gpll0_thermal_clk_src		0x02840712
 #define clk_gpll3_clk_src			0x5b1eccd5
 #define clk_gpll3_out_main			0xf5fc71ab
 #define clk_gpll3_out_aux			0xe72bea1a
@@ -27,10 +29,12 @@
 #define clk_gpll4_out_main                      0xdca8db2a
 #define clk_gpll6_clk_src			0x17dceaad
 #define clk_gpll6_out_main			0x27b8b7be
+#define clk_gpll6_thermal_clk_src		0x32fbf20f
 #define clk_a53ss_c0_pll			0xf761da94
 #define clk_a53ss_c1_pll			0xfbc57bbd
 #define clk_a53ss_cci_pll			0x17d32f1e
 
+/* SRCs */
 #define clk_apss_ahb_clk_src			0x36f8495f
 #define clk_blsp1_qup1_i2c_apps_clk_src		0x17f78f5e
 #define clk_blsp1_qup1_spi_apps_clk_src		0xf534c4fa
@@ -220,6 +224,7 @@
 #define clk_pixel_clk_src                       0x8b6f83d8
 #define clk_byte_clk_src                        0x3a911c53
 
+/* clock_rpm controlled clocks */
 #define clk_pnoc_clk				0xc1296d0f
 #define clk_pnoc_a_clk				0x9bcffee4
 #define clk_pnoc_msmbus_clk			0x2b53b688
@@ -284,6 +289,7 @@
 #define clk_ln_bb_a_clk				0xc7257ea8
 
 
+/* clock_debug controlled clocks */
 #define clk_gcc_debug_mux			0x8121ac15
 #define clk_rpm_debug_mux			0x25cd1f3a
 #define clk_wcnss_m_clk				0x709f430b
@@ -295,8 +301,11 @@
 #define clk_cci_m_clk				0xec7e8afc
 
 #define clk_a53ssmux_lc				0x71a9377b
+#define clk_a53_lc_clk				0xc69f0878
 #define clk_a53ssmux_bc				0xb5983c42
+#define clk_a53_bc_clk				0xcf28e63a
 #define clk_a53ssmux_cci			0x15560bd5
+#define clk_cci_clk                             0x96854074
 
 #define clk_audio_ap_clk 0x312ac429
 #define clk_audio_pmi_clk 0xb7ba2274

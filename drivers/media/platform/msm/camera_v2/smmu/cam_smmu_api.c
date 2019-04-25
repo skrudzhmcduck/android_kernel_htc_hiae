@@ -23,6 +23,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/qcom_iommu.h>
 #include <linux/msm_iommu_domains.h>
+#include <linux/workqueue.h>
 #include "cam_smmu_api.h"
 
 #define BYTE_SIZE 8
@@ -39,6 +40,16 @@
 #else
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
 #endif
+
+struct cam_smmu_work_payload {
+	int idx;
+	struct iommu_domain *domain;
+	struct device *dev;
+	unsigned long iova;
+	int flags;
+	void *token;
+	struct list_head list;
+};
 
 enum cam_protection_type {
 	CAM_PROT_INVALID,
@@ -80,6 +91,9 @@ struct cam_iommu_cb_set {
 	struct cam_context_bank_info *cb_info;
 	u32 cb_num;
 	u32 cb_init_count;
+	struct work_struct smmu_work;
+	struct mutex payload_list_lock;
+	struct list_head payload_list;
 };
 
 static struct of_device_id msm_cam_smmu_dt_match[] = {
@@ -122,6 +136,40 @@ static void cam_smmu_print_list(int idx);
 static void cam_smmu_print_table(void);
 static int cam_smmu_probe(struct platform_device *pdev);
 
+static void cam_smmu_check_vaddr_in_range(int idx, void *vaddr);
+
+static void cam_smmu_page_fault_work(struct work_struct *work)
+{
+	int idx, rc;
+	struct cam_smmu_work_payload *payload;
+
+	mutex_lock(&iommu_cb_set.payload_list_lock);
+	payload = list_first_entry(&iommu_cb_set.payload_list,
+			struct cam_smmu_work_payload,
+			list);
+	list_del(&payload->list);
+	mutex_unlock(&iommu_cb_set.payload_list_lock);
+
+	
+	idx = payload->idx;
+	mutex_lock(&iommu_cb_set.cb_info[idx].lock);
+	cam_smmu_check_vaddr_in_range(idx, (void *)payload->iova);
+	if ((iommu_cb_set.cb_info[idx].fault_handler)) {
+		rc = iommu_cb_set.cb_info[idx].fault_handler(
+			payload->domain,
+			payload->dev,
+			payload->iova,
+			payload->flags,
+			iommu_cb_set.cb_info[idx].token);
+		if (rc < 0)
+			pr_err("Client handler returned rc = %d, token = %pK,"
+				" flags = %d, iova = %ld\n", rc,
+				iommu_cb_set.cb_info[idx].token, payload->flags, payload->iova);
+	}
+	mutex_unlock(&iommu_cb_set.cb_info[idx].lock);
+	kfree(payload);
+}
+
 static void cam_smmu_print_list(int idx)
 {
 	struct cam_dma_buff_info *mapping;
@@ -129,7 +177,7 @@ static void cam_smmu_print_list(int idx)
 	pr_err("index = %d ", idx);
 	list_for_each_entry(mapping,
 		&iommu_cb_set.cb_info[idx].list_head, list) {
-		pr_err("ion_fd = %d, paddr= 0x%p, len = %u\n",
+		pr_err("ion_fd = %d, paddr= 0x%pK, len = %u\n",
 			 mapping->ion_fd, (void *)mapping->paddr,
 			 (unsigned int)mapping->len);
 	}
@@ -140,10 +188,10 @@ static void cam_smmu_print_table(void)
 	int i;
 
 	for (i = 0; i < iommu_cb_set.cb_num; i++) {
-		pr_err("i= %d, handle= %d, name_addr=%p\n", i,
+		pr_err("i= %d, handle= %d, name_addr=%pK\n", i,
 			   (int)iommu_cb_set.cb_info[i].handle,
 			   (void *)iommu_cb_set.cb_info[i].name);
-		pr_err("dev = %p ", iommu_cb_set.cb_info[i].dev);
+		pr_err("dev = %pK ", iommu_cb_set.cb_info[i].dev);
 	}
 }
 
@@ -159,17 +207,17 @@ static void cam_smmu_check_vaddr_in_range(int idx, void *vaddr)
 		end_addr = (unsigned long)mapping->paddr + mapping->len;
 
 		if (start_addr <= current_addr && current_addr <= end_addr) {
-			pr_err("Error: vaddr %p is valid: range:%p-%p, ion_fd = %d\n",
+			pr_err("Error: vaddr %pK is valid: range:%pK-%pK, ion_fd = %d\n",
 				vaddr, (void *)start_addr, (void *)end_addr,
 				mapping->ion_fd);
 			return;
 		} else {
-			pr_err("vaddr %p is not in this range: %p-%p, ion_fd = %d\n",
+			CDBG("vaddr %pK is not in this range: %pK-%pK, ion_fd = %d\n",
 				vaddr, (void *)start_addr, (void *)end_addr,
 				mapping->ion_fd);
 		}
 	}
-	pr_err("Cannot find vaddr:%p in SMMU. %s uses invalid virtual addreess\n",
+	pr_err("Cannot find vaddr:%pK in SMMU. %s uses invalid virtual addreess\n",
 		vaddr, iommu_cb_set.cb_info[idx].name);
 	return;
 }
@@ -209,36 +257,46 @@ static int cam_smmu_iommu_fault_handler(struct iommu_domain *domain,
 		int flags, void *token)
 {
 	char *cb_name;
-	int i, rc;
+	int i;
+	struct cam_smmu_work_payload *payload;
 
 	if (!token) {
 		pr_err("Error: token is NULL\n");
+		pr_err("Error: domain = %pK, device = %pK\n", domain, dev);
+		pr_err("iova = %lX, flags = %d\n", iova, flags);
 		return -ENOSYS;
 	}
 
 	cb_name = (char *)token;
-	/* check wether it is in the table */
+	
 	for (i = 0; i < iommu_cb_set.cb_num; i++) {
 		if (!strcmp(iommu_cb_set.cb_info[i].name, cb_name)) {
-			mutex_lock(&iommu_cb_set.cb_info[i].lock);
-			if (!(iommu_cb_set.cb_info[i].fault_handler)) {
-				pr_err("Error: %s: %p has page fault\n",
-						(char *)token,
-						(void *)iova);
-				cam_smmu_check_vaddr_in_range(i,
-						(void *)iova);
-				rc = -ENOSYS;
-			} else {
-				rc = iommu_cb_set.cb_info[i].fault_handler(
-					domain, dev, iova, flags,
-					iommu_cb_set.cb_info[i].token);
-			}
-			mutex_unlock(&iommu_cb_set.cb_info[i].lock);
-			return rc;
+			break;
 		}
 	}
-	pr_err("Error: cb_name %s is not valid.\n", (char *)token);
-	return -ENOSYS;
+
+	if (i < 0 || i >= iommu_cb_set.cb_num) {
+		pr_err("Error: cb_name %s is not valid.\n", (char *)token);
+		return -ENOSYS;
+	}
+
+	payload = kzalloc(sizeof(struct cam_smmu_work_payload), GFP_ATOMIC);
+	if (!payload)
+		return -ENOMEM;
+
+	payload->domain = domain;
+	payload->dev = dev;
+	payload->iova = iova;
+	payload->flags = flags;
+	payload->token = token;
+	payload->idx = i;
+
+	mutex_lock(&iommu_cb_set.payload_list_lock);
+	list_add_tail(&payload->list, &iommu_cb_set.payload_list);
+	mutex_unlock(&iommu_cb_set.payload_list_lock);
+	schedule_work(&iommu_cb_set.smmu_work);
+
+	return 0;
 }
 
 static enum dma_data_direction cam_smmu_translate_dir(
@@ -312,9 +370,6 @@ static int cam_smmu_check_handle_unique(int hdl)
 	return 0;
 }
 
-/**
- *  use low 2 bytes for handle cookie
- */
 static int cam_smmu_create_iommu_handle(int idx)
 {
 	int rand, hdl = 0;
@@ -329,7 +384,7 @@ static int cam_smmu_attach_device(int idx)
 	int rc;
 	struct cam_context_bank_info *cb = &iommu_cb_set.cb_info[idx];
 
-	/* attach the mapping to device */
+	
 	rc = arm_iommu_attach_device(cb->dev, cb->mapping);
 	if (rc < 0) {
 		pr_err("Error: ARM IOMMU attach failed. ret = %d\n", rc);
@@ -351,7 +406,7 @@ static int cam_smmu_create_add_handle_in_table(char *name,
 	int i;
 	int handle;
 
-	/* create handle and add in the iommu hardware table */
+	
 	for (i = 0; i < iommu_cb_set.cb_num; i++) {
 		if (!strcmp(iommu_cb_set.cb_info[i].name, name)) {
 			mutex_lock(&iommu_cb_set.cb_info[i].lock);
@@ -362,12 +417,12 @@ static int cam_smmu_create_add_handle_in_table(char *name,
 				mutex_unlock(&iommu_cb_set.cb_info[i].lock);
 			}
 
-			/* make sure handle is unique */
+			
 			do {
 				handle = cam_smmu_create_iommu_handle(i);
 			} while (cam_smmu_check_handle_unique(handle));
 
-			/* put handle in the table */
+			
 			iommu_cb_set.cb_info[i].handle = handle;
 			*hdl = handle;
 			CDBG("%s creates handle 0x%x\n", name, handle);
@@ -376,7 +431,7 @@ static int cam_smmu_create_add_handle_in_table(char *name,
 		}
 	}
 
-	/* if i == iommu_cb_set.cb_num */
+	
 	pr_err("Error: Cannot find name %s or all handle exist!\n",
 			name);
 	cam_smmu_print_table();
@@ -427,17 +482,13 @@ static void cam_smmu_clean_buffer_list(int idx)
 
 	list_for_each_entry_safe(mapping_info, temp,
 				&iommu_cb_set.cb_info[idx].list_head, list) {
-		CDBG("Free mapping address %p, i = %d, fd = %d\n",
+		CDBG("Free mapping address %pK, i = %d, fd = %d\n",
 			 (void *)mapping_info->paddr, idx,
 			mapping_info->ion_fd);
 		ret = cam_smmu_unmap_buf_and_remove_from_list(mapping_info,
 				idx);
 		if (ret < 0) {
 			pr_err("Error: Deleting one buffer failed\n");
-			/*
-			 * Ignore this error and continue to delete other
-			 * buffers in the list
-			 */
 			continue;
 		}
 	}
@@ -495,7 +546,7 @@ static int cam_smmu_map_buffer_and_add_to_list(int idx, int ion_fd,
 	struct dma_buf_attachment *attach = NULL;
 	struct sg_table *table = NULL;
 
-	/* allocate memory for each buffer information */
+	
 	buf = dma_buf_get(ion_fd);
 	if (IS_ERR_OR_NULL(buf)) {
 		rc = PTR_ERR(buf);
@@ -525,11 +576,11 @@ static int cam_smmu_map_buffer_and_add_to_list(int idx, int ion_fd,
 	}
 
 	if (table->sgl) {
-		CDBG("DMA buf: %p, device: %p, attach: %p, table: %p\n",
+		CDBG("DMA buf: %pK, device: %pK, attach: %pK, table: %pK\n",
 				(void *)buf,
 				(void *)iommu_cb_set.cb_info[idx].dev,
 				(void *)attach, (void *)table);
-		CDBG("table sgl: %p, rc: %d, dma_address: 0x%x\n",
+		CDBG("table sgl: %pK, rc: %d, dma_address: 0x%x\n",
 				(void *)table->sgl, rc,
 				(unsigned int)table->sgl->dma_address);
 	} else {
@@ -538,7 +589,7 @@ static int cam_smmu_map_buffer_and_add_to_list(int idx, int ion_fd,
 		goto err_unmap_sg;
 	}
 
-	/* fill up mapping_info */
+	
 	mapping_info = kzalloc(sizeof(struct cam_dma_buff_info), GFP_KERNEL);
 	if (!mapping_info) {
 		pr_err("Error: No enough space!\n");
@@ -554,7 +605,7 @@ static int cam_smmu_map_buffer_and_add_to_list(int idx, int ion_fd,
 	mapping_info->dir = dma_dir;
 	mapping_info->ref_count = 1;
 
-	/* return paddr and len to client */
+	
 	*paddr_ptr = sg_dma_address(table->sgl);
 	*len_ptr = (size_t)sg_dma_len(table->sgl);
 
@@ -563,11 +614,11 @@ static int cam_smmu_map_buffer_and_add_to_list(int idx, int ion_fd,
 		rc = -ENOSPC;
 		goto err_unmap_sg;
 	}
-	CDBG("ion_fd = %d, dev = %p, paddr= %p, len = %u\n", ion_fd,
+	CDBG("ion_fd = %d, dev = %pK, paddr= %pK, len = %u\n", ion_fd,
 			(void *)iommu_cb_set.cb_info[idx].dev,
 			(void *)*paddr_ptr, (unsigned int)*len_ptr);
 
-	/* add to the list */
+	
 	list_add(&mapping_info->list, &iommu_cb_set.cb_info[idx].list_head);
 	return 0;
 
@@ -587,16 +638,16 @@ static int cam_smmu_unmap_buf_and_remove_from_list(
 {
 	if ((!mapping_info->buf) || (!mapping_info->table) ||
 		(!mapping_info->attach)) {
-		pr_err("Error: Invalid params dev = %p, table = %p",
+		pr_err("Error: Invalid params dev = %pK, table = %pK",
 			(void *)iommu_cb_set.cb_info[idx].dev,
 			(void *)mapping_info->table);
-		pr_err("Error:dma_buf = %p, attach = %p\n",
+		pr_err("Error:dma_buf = %pK, attach = %pK\n",
 			(void *)mapping_info->buf,
 			(void *)mapping_info->attach);
 		return -EINVAL;
 	}
 
-	/* iommu buffer clean up */
+	
 	dma_unmap_sg(iommu_cb_set.cb_info[idx].dev, mapping_info->table->sgl,
 		mapping_info->table->nents, mapping_info->dir);
 	dma_buf_unmap_attachment(mapping_info->attach,
@@ -607,7 +658,7 @@ static int cam_smmu_unmap_buf_and_remove_from_list(
 
 	list_del_init(&mapping_info->list);
 
-	/* free one buffer */
+	
 	kfree(mapping_info);
 	return 0;
 }
@@ -644,7 +695,7 @@ int cam_smmu_get_handle(char *identifier, int *handle_ptr)
 		return -EFAULT;
 	}
 
-	/* create and put handle in the table */
+	
 	ret = cam_smmu_create_add_handle_in_table(identifier, handle_ptr);
 	if (ret < 0) {
 		pr_err("Error: %s gets handle fail\n", identifier);
@@ -705,7 +756,7 @@ int cam_smmu_get_phy_addr(int handle, int ion_fd,
 		pr_err("Error: Input pointers are invalid\n");
 		return -EINVAL;
 	}
-	/* clean the content from clients */
+	
 	*paddr_ptr = (dma_addr_t)NULL;
 	*len_ptr = (size_t)0;
 
@@ -762,7 +813,7 @@ int cam_smmu_put_phy_addr(int handle, int ion_fd)
 	int ret = -1;
 	struct cam_dma_buff_info *mapping_info;
 
-	/* find index in the iommu_cb_set.cb_info */
+	
 	idx = GET_SMMU_TABLE_IDX(handle);
 	if (idx < 0 || idx >= iommu_cb_set.cb_num) {
 		pr_err("Error: index is not valid, index = %d.\n", idx);
@@ -777,7 +828,7 @@ int cam_smmu_put_phy_addr(int handle, int ion_fd)
 		return -EINVAL;
 	}
 
-	/* based on ion fd and index, we can find mapping info of buffer */
+	
 	mapping_info = cam_smmu_find_mapping_by_ion_index(idx, ion_fd);
 	if (!mapping_info) {
 		pr_err("Error: Invalid params\n");
@@ -793,7 +844,7 @@ int cam_smmu_put_phy_addr(int handle, int ion_fd)
 		return 0;
 	}
 
-	/* unmapping one buffer from device */
+	
 	ret = cam_smmu_unmap_buf_and_remove_from_list(mapping_info, idx);
 	if (ret < 0) {
 		pr_err("Error: unmap or remove list fail\n");
@@ -846,7 +897,6 @@ int cam_smmu_destroy_handle(int handle)
 }
 EXPORT_SYMBOL(cam_smmu_destroy_handle);
 
-/*This function can only be called after smmu driver probe*/
 int cam_smmu_get_num_of_clients(void)
 {
 	return iommu_cb_set.cb_num;
@@ -881,7 +931,7 @@ static int cam_smmu_setup_cb(struct cam_context_bank_info *cb,
 	cb->va_start = SZ_128K;
 	cb->va_len = SZ_2G - SZ_128K;
 
-	/* create a virtual mapping */
+	
 	cb->mapping = arm_iommu_create_mapping(&platform_bus_type,
 		cb->va_start, cb->va_len, order);
 	if (IS_ERR(cb->mapping)) {
@@ -890,11 +940,6 @@ static int cam_smmu_setup_cb(struct cam_context_bank_info *cb,
 		goto end;
 	}
 
-	/*
-	 * Set the domain attributes
-	 * disable L2 redirect since it decreases
-	 * performance
-	 */
 	if (iommu_domain_set_attr(cb->mapping->domain,
 		DOMAIN_ATTR_COHERENT_HTW_DISABLE,
 		&disable_htw)) {
@@ -919,7 +964,7 @@ static int cam_alloc_smmu_context_banks(struct device *dev)
 
 	iommu_cb_set.cb_num = 0;
 
-	/* traverse thru all the child nodes and increment the cb count */
+	
 	for_each_child_of_node(dev->of_node, domains_child_node) {
 		if (of_device_is_compatible(domains_child_node,
 			"qcom,msm-cam-smmu-cb"))
@@ -935,7 +980,7 @@ static int cam_alloc_smmu_context_banks(struct device *dev)
 		return -ENOENT;
 	}
 
-	/* allocate memory for the context banks */
+	
 	iommu_cb_set.cb_info = devm_kzalloc(dev,
 		iommu_cb_set.cb_num * sizeof(struct cam_context_bank_info),
 		GFP_KERNEL);
@@ -964,24 +1009,24 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 		return -ENODEV;
 	}
 
-	/* check the bounds */
+	
 	if (iommu_cb_set.cb_init_count >= iommu_cb_set.cb_num) {
 		pr_err("Error: populate more than allocated cb\n");
 		rc = -EBADHANDLE;
 		goto cb_init_fail;
 	}
 
-	/* read the context bank from cb set */
+	
 	cb = &iommu_cb_set.cb_info[iommu_cb_set.cb_init_count];
 
-	/* set the name of the context bank */
+	
 	rc = of_property_read_string(dev->of_node, "label", &cb->name);
 	if (rc) {
 		pr_err("Error: failed to read label from sub device\n");
 		goto cb_init_fail;
 	}
 
-	/* set the secure/non secure domain type */
+	
 	if (of_property_read_bool(dev->of_node, "qcom,secure-context"))
 		cb->is_secure = CAM_SECURE;
 	else
@@ -989,7 +1034,7 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 
 	CDBG("cb->name : %s, cb->is_secure :%d\n", cb->name, cb->is_secure);
 
-	/* set up the iommu mapping for the  context bank */
+	
 
 	if (type == CAM_QSMMU) {
 		ctx = msm_iommu_get_ctx(cb->name);
@@ -1007,7 +1052,7 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 			cam_smmu_iommu_fault_handler,
 			(void *)cb->name);
 
-	/* increment count to next bank */
+	
 	iommu_cb_set.cb_init_count++;
 
 	CDBG("X: cb init count :%d\n", iommu_cb_set.cb_init_count);
@@ -1047,17 +1092,22 @@ static int cam_smmu_probe(struct platform_device *pdev)
 		return rc;
 	}
 
-	/* probe thru all the subdevices */
+	
 	rc = of_platform_populate(pdev->dev.of_node, msm_cam_smmu_dt_match,
 				NULL, &pdev->dev);
 	if (rc < 0)
 		pr_err("Error: populating devices\n");
+
+	INIT_WORK(&iommu_cb_set.smmu_work, cam_smmu_page_fault_work);
+	mutex_init(&iommu_cb_set.payload_list_lock);
+	INIT_LIST_HEAD(&iommu_cb_set.payload_list);
+
 	return rc;
 }
 
 static int cam_smmu_remove(struct platform_device *pdev)
 {
-	/* release all the context banks and memory allocated */
+	
 	cam_smmu_deinit_iommu_table();
 	if (of_device_is_compatible(pdev->dev.of_node, "qcom,msm-cam-smmu"))
 		cam_smmu_release_cb(pdev);

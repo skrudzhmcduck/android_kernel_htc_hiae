@@ -1,5 +1,6 @@
 #ifndef _CABLE_DETECT_H_
 #define _CABLE_DETECT_H_
+//#include <mach/board.h>
 
 #define DOCK_STATE_UNDEFINED				-1
 #define DOCK_STATE_UNDOCKED				0
@@ -22,14 +23,16 @@ __maybe_unused static int htc_cable_detect_retry_times = 3;
 #endif
 #define ADC_DELAY HZ/8
 
-#define PM8058ADC_15BIT(adc) ((adc * 2200) / 32767) 
+#define PM8058ADC_15BIT(adc) ((adc * 2200) / 32767) /* vref=2.2v, 15-bits resolution */
 
 #define CABLE_ERR(fmt, args...) \
 	printk(KERN_ERR "[CABLE:ERR] " fmt, ## args)
 #define CABLE_WARNING(fmt, args...) \
 	printk(KERN_WARNING "[CABLE] " fmt, ## args)
+/*++ 2014/04/18, USB Team, now uart log doesn't output INFO level log PCN00003 ++*/
 #define CABLE_INFO(fmt, args...) \
 	printk(KERN_INFO "[CABLE] " fmt, ## args)
+/*-- 2014/04/18, USB Team,  PCN00003 --*/
 #define CABLE_DEBUG(fmt, args...) \
 	printk(KERN_DEBUG "[CABLE] " fmt, ## args)
 
@@ -66,18 +69,20 @@ struct cable_detect_platform_data {
 	int vbus_mpp_gpio;
 	int vbus_mpp_irq;
 	void (*vbus_mpp_config)(void);
-	
+	/* 1 : uart, 0 : usb */
 	void (*usb_uart_switch)(int);
 	void (*usb_dpdn_switch)(int);
 
 	int ad_en_active_state;
 	int ad_en_gpio;
 	int ad_en_irq;
-	
+	/* for accessory detection */
 	u8 accessory_type;
 	u8 mfg_usb_carkit_enable;
 	int usb_id_pin_type;
+/*++ 2014/06/05, USB Team, PCN00018 ++*/
 	int (*usb_id_pin_gpio)(void);
+/*-- 2014/06/05, USB Team, PCN00018 --*/
 	__u8 detect_type;
 
 #ifdef CONFIG_HTC_MHL_DETECTION
@@ -110,6 +115,9 @@ struct cable_detect_platform_data {
 	int vbus_debounce_retry;
 };
 
+/* -----------------------------------------------------------------------------
+»       »       »       External routine declaration
+-----------------------------------------------------------------------------*/
 #ifdef CONFIG_FB_MSM_MDSS_HDMI_MHL_SII9234
 extern void sii9234_mhl_device_wakeup(void);
 #endif
@@ -122,6 +130,9 @@ extern irqreturn_t cable_detection_vbus_irq_handler(void);
 extern int check_three_pogo_dock(void);
 
 
+//void msm_hsusb_set_vbus_state(int online);
+//void msm_otg_set_vbus_state(int online);
+//void htc_dwc3_msm_otg_set_vbus_state(int online);
 
 enum usb_connect_type {
 	CONNECT_TYPE_MHL_UNKNOWN = -4,
@@ -136,11 +147,12 @@ enum usb_connect_type {
 	CONNECT_TYPE_INTERNAL,
 	CONNECT_TYPE_UNSUPPORTED,
 #ifdef CONFIG_MACH_VERDI_LTE
-	
+	/* Y cable with USB and 9V charger */
 	CONNECT_TYPE_USB_9V_AC,
 #endif
 	CONNECT_TYPE_MHL_AC,
 };
+/* START: add USB connected notify function */
 struct t_usb_status_notifier{
 	struct list_head notifier_link;
 	const char *name;
@@ -159,6 +171,9 @@ struct t_usb_host_status_notifier{
 int usb_host_detect_register_notifier(struct t_usb_host_status_notifier *);
 static LIST_HEAD(g_lh_usb_host_detect_notifier_list);
 
+/***********************************
+Direction: cable detect drvier -> battery driver or other
+ ***********************************/
 struct t_cable_status_notifier{
 	struct list_head cable_notifier_link;
 	const char *name;
@@ -169,6 +184,9 @@ static LIST_HEAD(g_lh_calbe_detect_notifier_list);
 
 
 #ifdef CONFIG_HTC_MHL_DETECTION
+/***********************************
+ Direction: sii9234 drvier -> cable detect driver
+***********************************/
 struct t_mhl_status_notifier{
         struct list_head mhl_notifier_link;
         const char *name;
@@ -178,6 +196,10 @@ int mhl_detect_register_notifier(struct t_mhl_status_notifier *);
 static LIST_HEAD(g_lh_mhl_detect_notifier_list);
 #endif
 #if 0
+/***********************************
+Direction: cable detect drvier -> usb driver
+ ***********************************/
+/*++ 2014/12/19 USB Team, PCN00060 ++*/
 struct t_usb_host_mhl_status_notifier{
 	struct list_head usb_host_mhl_notifier_link;
 	const char *name;
@@ -185,5 +207,6 @@ struct t_usb_host_mhl_status_notifier{
 };
 int usb_host_mhl_detect_register_notifier(struct t_usb_host_mhl_status_notifier *);
 static LIST_HEAD(g_lh_usb_host_mhl_detect_notifier_list);
+/*-- 2014/12/19 USB Team, PCN00060 --*/
 #endif
 #endif

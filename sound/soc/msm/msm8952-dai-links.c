@@ -41,6 +41,11 @@ static struct snd_soc_ops msm_pri_auxpcm_be_ops = {
 	.startup = msm_prim_auxpcm_startup,
 	.shutdown = msm_prim_auxpcm_shutdown,
 };
+
+static struct snd_soc_ops msm_sec_auxpcm_be_ops = {
+	.startup = msm_sec_auxpcm_startup,
+	.shutdown = msm_sec_auxpcm_shutdown,
+};
 #endif 
 
 static struct snd_soc_ops msm8952_slimbus_be_ops = {
@@ -92,22 +97,6 @@ static int msm_htc_quin_mi2s_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_add_routes(dapm, htc_quat_mi2s_virtual_route,
 		ARRAY_SIZE(htc_quat_mi2s_virtual_route));
 	pr_info("%s: --\n",__func__);
-
-	return 0;
-}
-
-int htc_msm_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
-				struct snd_pcm_hw_params *params)
-{
-	struct snd_interval *rate = hw_param_interval(params,
-					SNDRV_PCM_HW_PARAM_RATE);
-
-	struct snd_interval *channels = hw_param_interval(params,
-					SNDRV_PCM_HW_PARAM_CHANNELS);
-
-	pr_debug("%s()\n", __func__);
-	rate->min = rate->max = 48000;
-	channels->min = channels->max = 1;
 
 	return 0;
 }
@@ -1036,6 +1025,20 @@ static struct snd_soc_dai_link msm8952_common_fe_dai[] = {
 		.codec_dai_name = "snd-soc-dummy-dai",
 		.codec_name = "snd-soc-dummy",
 	},
+	{
+		.name = "QUIN_MI2S_RX Hostless",
+		.stream_name = "QUIN_MI2S_RX Hostless",
+		.cpu_dai_name = "QUIN_MI2S_RX_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
 };
 
 static struct snd_soc_dai_link msm8952_common_be_dai[] = {
@@ -1081,6 +1084,35 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 		.be_id = MSM_BACKEND_DAI_AUXPCM_TX,
 		.be_hw_params_fixup = msm_auxpcm_be_params_fixup,
 		.ops = &msm_pri_auxpcm_be_ops,
+		.ignore_suspend = 1,
+	},
+	
+	{
+		.name = LPASS_BE_SEC_AUXPCM_RX,
+		.stream_name = "Sec AUX PCM Playback",
+		.cpu_dai_name = "msm-dai-q6-auxpcm.2",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-rx",
+		.no_pcm = 1,
+		.be_id = MSM_BACKEND_DAI_SEC_AUXPCM_RX,
+		.be_hw_params_fixup = msm_auxpcm_be_params_fixup,
+		.ops = &msm_sec_auxpcm_be_ops,
+		.ignore_pmdown_time = 1,
+		.ignore_suspend = 1,
+		
+	},
+	{
+		.name = LPASS_BE_SEC_AUXPCM_TX,
+		.stream_name = "Sec AUX PCM Capture",
+		.cpu_dai_name = "msm-dai-q6-auxpcm.2",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "msm-stub-codec.1",
+		.codec_dai_name = "msm-stub-tx",
+		.no_pcm = 1,
+		.be_id = MSM_BACKEND_DAI_SEC_AUXPCM_TX,
+		.be_hw_params_fixup = msm_auxpcm_be_params_fixup,
+		.ops = &msm_sec_auxpcm_be_ops,
 		.ignore_suspend = 1,
 	},
 #endif 
@@ -1232,8 +1264,13 @@ static struct snd_soc_dai_link msm8952_common_be_dai[] = {
 		.stream_name = "Quinary MI2S Playback",
 		.cpu_dai_name = "msm-dai-q6-mi2s.5",
 		.platform_name = "msm-pcm-routing",
+#ifdef CONFIG_SND_SOC_TFA98XX
+		.codec_dai_name = "tfa98xx-aif-8-34",
+		.codec_name = "tfa98xx.8-0034",
+#else
 		.codec_dai_name = "msm_htc_mi2s_codec", 
 		.codec_name = "msm-stub-codec.1", 
+#endif
 		.no_pcm = 1,
 		.be_id = MSM_BACKEND_DAI_QUINARY_MI2S_RX,
 		.be_hw_params_fixup = htc_msm_be_hw_params_fixup, 
@@ -1313,15 +1350,18 @@ struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 {
 	struct snd_soc_card *card = &snd_soc_card_msm_card;
 	struct snd_soc_dai_link *msm8952_dai_links = NULL;
-	int num_links, ret, len1, len2, len3, i;
-	const char *wsa = "asoc-wsa-codec-names";
-	const char *wsa_prefix = "asoc-wsa-codec-prefixes";
+	int num_links = 0, ret, len1, len2, len3, i; 
+	const char *wsa = "qcom,aux-codec";
+	const char *wsa_prefix = "qcom,aux-codec-prefix";
 	int num_strings;
 	char *temp_str = NULL;
 	const char *wsa_str = NULL;
 	const char *wsa_prefix_str = NULL;
 	enum codec_variant codec_ver = 0;
 	const char *tasha_lite = "msm8976-tashalite-snd-card";
+	u32 *index = NULL;
+	u32 max_aux_dev = 0;
+	int found = 0;
 
 	card->dev = dev;
 	ret = snd_soc_of_parse_card_name(card, "qcom,model");
@@ -1369,39 +1409,73 @@ struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 			msm8952_tasha_be_dai, sizeof(msm8952_tasha_be_dai));
 		msm8952_dai_links = msm8952_tasha_dai_links;
 
+		ret = of_property_read_u32(dev->of_node,
+				"qcom,max-aux-codec", &max_aux_dev);
+		if (ret) {
+			dev_warn(dev,
+				"%s: max-aux-codec property missing in DT %s, ret = %d\n",
+				__func__, dev->of_node->full_name, ret);
+			goto ret_card;
+		}
+		if (max_aux_dev == 0) {
+			dev_warn(dev,
+				"%s: No aux codec defined for this target.\n",
+				__func__);
+			goto ret_card;
+		}
+		index = devm_kzalloc(dev, (sizeof(u32) * max_aux_dev),
+				GFP_KERNEL);
+		if (!index)
+			return NULL;
+
 		num_strings = of_property_count_strings(dev->of_node,
 				wsa);
-		card->aux_dev = msm895x_aux_dev;
-		card->num_aux_devs	= num_strings;
-		card->codec_conf	= msm895x_codec_conf;
-		card->num_configs	= num_strings;
-
 		for (i = 0; i < num_strings; i++) {
 			ret = of_property_read_string_index(
 					dev->of_node, wsa,
 					i, &wsa_str);
 			if (ret) {
 				dev_err(dev,
-					"%s:of read string %s i %d error %d\n",
-					__func__, wsa, i, ret);
+						"%s:of read string %s i %d error %d\n",
+						__func__, wsa, i, ret);
 				goto err;
 			}
+			if (soc_check_aux_dev_byname(card, wsa_str) == 0) {
+				if (found >= max_aux_dev) {
+					dev_err(dev,
+					"%s: found  %d components. total %d\n",
+					__func__, found, max_aux_dev);
+					goto err;
+				}
+				index[found] = i;
 
-			temp_str = kstrdup(wsa_str, GFP_KERNEL);
-			if (!temp_str)
-				goto err;
-			msm895x_aux_dev[i].codec_name = temp_str;
-			temp_str = NULL;
+				temp_str = NULL;
+				temp_str = kstrdup(wsa_str, GFP_KERNEL);
+				if (!temp_str)
+					goto err;
+				msm895x_aux_dev[found].codec_name = temp_str;
 
-			temp_str = kstrdup(wsa_str, GFP_KERNEL);
-			if (!temp_str)
-				goto err;
-			msm895x_codec_conf[i].dev_name = temp_str;
-			temp_str = NULL;
+				temp_str = NULL;
+				temp_str = kstrdup(wsa_str, GFP_KERNEL);
+				if (!temp_str)
+					goto err;
+				msm895x_codec_conf[found].dev_name = temp_str;
+				temp_str = NULL;
+				found++;
+			}
+		}
 
+		if (found < max_aux_dev) {
+			dev_err(dev,
+			"%s: failed to find %d components. Found only %d\n",
+			__func__, max_aux_dev, found);
+			goto err;
+		}
+
+		for (i = 0; i < max_aux_dev; i++) {
 			ret = of_property_read_string_index(
 					dev->of_node, wsa_prefix,
-					i, &wsa_prefix_str);
+					index[i], &wsa_prefix_str);
 			if (ret) {
 				dev_err(dev,
 					"%s:of read string %s i %d error %d\n",
@@ -1417,15 +1491,19 @@ struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 			temp_str = NULL;
 		}
 	}
-
+	card->aux_dev = msm895x_aux_dev;
+	card->codec_conf = msm895x_codec_conf;
+ret_card:
+	card->num_configs = max_aux_dev;
+	card->num_aux_devs = max_aux_dev;
 	card->dai_link = msm8952_dai_links;
 	card->num_links = num_links;
 	card->dev = dev;
 
 	return card;
 err:
-	if (card->num_aux_devs > 0) {
-		for (i = 0; i < card->num_aux_devs; i++) {
+	if (max_aux_dev > 0) {
+		for (i = 0; i < max_aux_dev; i++) {
 			kfree(msm895x_aux_dev[i].codec_name);
 			kfree(msm895x_codec_conf[i].dev_name);
 			kfree(msm895x_codec_conf[i].name_prefix);

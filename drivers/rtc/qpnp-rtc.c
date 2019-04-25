@@ -21,6 +21,7 @@
 #include <linux/spinlock.h>
 #include <linux/spmi.h>
 #include <linux/bug.h>
+#include <linux/alarmtimer.h>
 #ifdef CONFIG_HTC_POWER_DEBUG
 #include <linux/debugfs.h>
 #include <linux/htc_flags.h>
@@ -629,6 +630,9 @@ static int qpnp_rtc_probe(struct spmi_device *spmi)
 		rc = PTR_ERR(rtc_dd->rtc);
 		goto fail_rtc_enable;
 	}
+
+	
+	power_on_alarm_init();
 
 	
 	rc = request_any_context_irq(rtc_dd->rtc_alarm_irq,

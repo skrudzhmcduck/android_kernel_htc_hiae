@@ -520,6 +520,8 @@ static void pil_remove_proxy_vote(struct pil_desc *pil)
 	disable_regulators(d->proxy_regs, d->proxy_reg_count);
 }
 
+static void* g_video_venus_mdata_buf = 0;
+static dma_addr_t g_video_venus_mdata_phys;
 static int pil_init_image_trusted(struct pil_desc *pil,
 		const u8 *metadata, size_t size)
 {
@@ -542,15 +544,28 @@ static int pil_init_image_trusted(struct pil_desc *pil,
 	ret = scm_pas_enable_bw();
 	if (ret)
 		return ret;
-	dev.coherent_dma_mask =
-		DMA_BIT_MASK(sizeof(dma_addr_t) * 8);
-	dma_set_attr(DMA_ATTR_STRONGLY_ORDERED, &attrs);
-	mdata_buf = dma_alloc_attrs(&dev, size, &mdata_phys, GFP_KERNEL,
-					&attrs);
-	if (!mdata_buf) {
-		pr_err("scm-pas: Allocation for metadata failed.\n");
-		scm_pas_disable_bw();
-		return -ENOMEM;
+	if (!strncmp("venus", pil->fw_name, 5) && g_video_venus_mdata_buf) {
+		pr_info("pil_init_image_trusted, reuse, size %zu, name %s, (%p, phys %p)\n",
+				size, pil->fw_name, g_video_venus_mdata_buf, (void*)g_video_venus_mdata_phys);
+		mdata_buf = g_video_venus_mdata_buf;
+		mdata_phys = g_video_venus_mdata_phys;
+	} else {
+		dev.coherent_dma_mask =
+			DMA_BIT_MASK(sizeof(dma_addr_t) * 8);
+		dma_set_attr(DMA_ATTR_STRONGLY_ORDERED, &attrs);
+		mdata_buf = dma_alloc_attrs(&dev, size, &mdata_phys, GFP_KERNEL,
+						&attrs);
+		if (!mdata_buf) {
+			pr_err("scm-pas: Allocation for metadata failed.\n");
+			scm_pas_disable_bw();
+			return -ENOMEM;
+		}
+		if (!strncmp("venus", pil->fw_name, 5)) {
+			g_video_venus_mdata_buf = mdata_buf;
+			g_video_venus_mdata_phys = mdata_phys;
+			pr_info("pil_init_image_trusted, init, size %zu, name %s, (%p, phys %p)\n",
+					size, pil->fw_name, g_video_venus_mdata_buf, (void*)g_video_venus_mdata_phys);
+		}
 	}
 
 	memcpy(mdata_buf, metadata, size);
@@ -570,7 +585,8 @@ static int pil_init_image_trusted(struct pil_desc *pil,
 		scm_ret = desc.ret[0];
 	}
 
-	dma_free_attrs(&dev, size, mdata_buf, mdata_phys, &attrs);
+	if (strncmp("venus", pil->fw_name, 5)) 
+		dma_free_attrs(&dev, size, mdata_buf, mdata_phys, &attrs);
 	scm_pas_disable_bw();
 	if (ret)
 		return ret;

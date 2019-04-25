@@ -201,7 +201,8 @@ int decode_encode_hdlc(void*data, int *len, unsigned char *buf_hdlc, int remove,
 int checkcmd_modem_epst(unsigned char *buf)
 {
 	char unsigned value = *((uint8_t *)buf);
-	DIAG_DBUG("%s: cmd = 0x%x \n",__func__, value);
+	if (DM_enable)
+		DIAG_DBUG("%s: cmd = 0x%x \n",__func__, value);
 #if CONFIG_ARCH_MSM
 	if (*buf == 0xc && radio_initialized == 0 && diag2arm9query) {
 		DIAG_INFO("%s: modem is ready\n", __func__);
@@ -821,6 +822,7 @@ static int diag2arm9_open(struct inode *ip, struct file *fp)
 	ctxt->read_arm9_buf = 0;
 	ctxt->read_arm9_req = 0;
 	ctxt->diag2arm9_opened = true;
+	DM_enable = true; 
 
 	for (i = 0; i < NUM_PERIPHERALS; i++) {
 		diagfwd_open(i, TYPE_DATA);

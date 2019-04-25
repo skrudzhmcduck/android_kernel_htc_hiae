@@ -48,6 +48,7 @@
 	htc_mcu@72 {
 			compatible = "htc_mcu";
 			reg = <0x72>;
+			vdd-supply = <&pm8950_l6>;
 			interrupt-parent = <&msm_gpio>;
 			interrupts = <45 0x0>;
 			mcu,intr-gpio  = <&msm_gpio 45 0>;

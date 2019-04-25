@@ -168,10 +168,12 @@
 		reg = <0xc051000 0x4>,
 		    <0xc051004 0x4>,
 		    <0xc055000 0x4>,
+		    <0xc056000 0x4>,
 		    <0xc052000 0x4>;
 		reg-names = "csr_gp_io_mux_mic_ctl",
 			"csr_gp_io_mux_spkr_ctl",
 			"csr_gp_io_lpaif_pri_pcm_pri_mode_muxsel",
+			"csr_gp_io_lpaif_sec_pcm_sec_mode_muxsel",
 			"csr_gp_io_mux_quin_ctl";
 		qcom,msm-gpios =
 			"quin_i2s";
@@ -272,6 +274,11 @@
 		hset-amp-gpio-en = <&msm_gpio 94 0>;
 		rcv-ldo-gpio-en	= <&msm_gpio 22 0>;
 		rcv-amp-gpio-en	= <&msm_gpio 23 0>;
+
+		htc,aud-component-list =
+			"RT5507",
+			"TPA6185",
+			"TFA9895";
 	};
 
 	cpe: qcom,msm-cpe-lsm {

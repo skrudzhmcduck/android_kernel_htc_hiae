@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,7 +22,7 @@
 		qcom,saw2-spm-dly = <0X3c102800>;
 		qcom,saw2-spm-ctl = <0x8>;
 		qcom,cpu-vctl-list = <&CPU0 &CPU1 &CPU2 &CPU3>;
-		qcom,vctl-timeout-us = <50>;
+		qcom,vctl-timeout-us = <500>;
 		qcom,vctl-port = <0x0>;
 		qcom,phase-port = <0x1>;
 		qcom,saw2-pmic-data0 = <0x03030080>; /* VDD_APC0 on */
@@ -42,7 +42,7 @@
 		qcom,saw2-spm-dly = <0x3c11840a>;
 		qcom,saw2-spm-ctl = <0x8>;
 		qcom,cpu-vctl-list = <&CPU4 &CPU5>;
-		qcom,vctl-timeout-us = <50>;
+		qcom,vctl-timeout-us = <500>;
 		qcom,vctl-port = <0x0>;
 		qcom,phase-port = <0x1>;
 		qcom,saw2-pmic-data0 = <0x03030080>; /* VDD_APC1 on */
@@ -98,6 +98,7 @@
 				qcom,time-overhead = <1158>;
 				qcom,min-child-idx = <3>;
 				qcom,notify-rpm;
+				qcom,is-reset;
 			};
 
 			qcom,pm-cluster@0{
@@ -152,6 +153,7 @@
 					qcom,energy-overhead = <479220>;
 					qcom,time-overhead = <779>;
 					qcom,min-child-idx = <1>;
+					qcom,is-reset;
 				};
 
 				qcom,pm-cpu {
@@ -179,7 +181,7 @@
 						qcom,energy-overhead = <199236>;
 						qcom,time-overhead = <330>;
 						qcom,use-broadcast-timer;
-						qcom,cpu-is-reset;
+						qcom,is-reset;
 					};
 				};
 			};
@@ -236,6 +238,7 @@
 					qcom,energy-overhead = <777359>;
 					qcom,time-overhead = <1256>;
 					qcom,min-child-idx = <2>;
+					qcom,is-reset;
 				};
 
 				qcom,pm-cpu {
@@ -274,7 +277,7 @@
 						qcom,energy-overhead = <194277>;
 						qcom,time-overhead = <302>;
 						qcom,use-broadcast-timer;
-						qcom,cpu-is-reset;
+						qcom,is-reset;
 					};
 				};
 			};
@@ -334,6 +337,7 @@
 			<0xff 112>, /* smmu_bus_intr[38] */
 			<0xff 114>, /* qdsd_intr_out */
 			<0xff 126>, /* app_cxt_irpt_10 */
+			<0xff 128>, /* blsp1_peripheral_irq[3] */
 			<0xff 129>, /* blsp1_peripheral_irq[4] */
 			<0xff 130>, /* qup_irq */
 			<0xff 131>, /* qup_irq */
@@ -388,6 +392,7 @@
 			<0xff 207>, /* rpm_ipc(27) */
 			<0xff 212>, /* lpass_slimbus_bam_ee1_irq */
 			<0xff 215>, /* o_bimc_intr[0] */
+			<0xff 224>, /* spdm_realtime_irq[1] */
 			<0xff 239>, /* crypto_bam_irq[1]*/
 			<0xff 240>, /* summary_irq_kpss */
 			<0xff 253>, /* sdc2_pwr_cmd_irq */
@@ -415,6 +420,7 @@
 
 		qcom,gpio-parent = <&msm_gpio>;
 		qcom,gpio-map = <3  100>,
+			<4  1>,
 			<5  5>,
 			<6  9>,
 			<8  106>,

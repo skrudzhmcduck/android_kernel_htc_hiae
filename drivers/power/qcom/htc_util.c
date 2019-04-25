@@ -127,6 +127,8 @@ const char * const vm_event_text[] = {
 #define BUFFER_TEMP_LEN                         32
 #define PON_PRINT_NUM				3
 
+#define KTOP_ACCU_FD "/sys/power/ktop_accu"
+
 struct process_monitor_statistic {
        unsigned int pid;
        char *ppid_name;
@@ -219,7 +221,6 @@ static const char * const qpnp_poff_reason[] = {
 };
 
 static int msm_htc_util_delay_time = 10000;
-static int msm_htc_util_delay_time_son = 60000;
 module_param_named(kmonitor_delay, msm_htc_util_delay_time, int, S_IRUGO | S_IWUSR | S_IWGRP);
 static int msm_htc_util_top_delay_time = 60000;
 module_param_named(ktop_delay, msm_htc_util_top_delay_time, int, S_IRUGO | S_IWUSR | S_IWGRP);
@@ -253,6 +254,12 @@ static int statistic_monitor_period = 1;
 static struct process_monitor_statistic process_monitor_5_in_10_array[PROCESS_MONITOR_ARRAY_5_IN_10_SIZE];
 #endif 
 
+#define MSM_HTC_UTIL_DELAY_TIME_COMMERCIAL 60000
+bool is_commercial()
+{
+     return get_radio_flag() == 0;
+}
+
 static void clear_process_monitor_array(struct process_monitor_statistic *pArray, int array_size)
 {
 	int j;
@@ -268,6 +275,50 @@ static void clear_process_monitor_array(struct process_monitor_statistic *pArray
 #endif 
 	}
 } 
+
+static void write_ktop_fd(struct _htc_kernel_top *ktop)
+{
+	struct file *fp = NULL;
+	char buf[BUFFER_TEMP_LEN * NUM_BUSY_THREAD_CHECK];
+	char temp[BUFFER_TEMP_LEN];
+	uint8_t idx = 0;
+	int tmp;
+	uint8_t size;
+	int pid, usage;
+	char *name;
+	unsigned long duration;
+
+	fp = filp_open(KTOP_ACCU_FD, O_WRONLY, 0);
+	if (IS_ERR(fp)) {
+		pr_err("Unable to open KTOP_ACCU_FD\n");
+		return;
+	}
+
+	duration = ktop->cpustat_time;
+	if (duration) {
+		buf[0] = '\0';
+		size = sizeof(buf);
+
+		while(idx < NUM_BUSY_THREAD_CHECK) {
+			pid = ktop->top_loading_pid[idx];
+			name = ktop->task_ptr_array[pid]->comm;
+			usage = ktop->curr_proc_delta[pid] * 100 / duration;
+			pr_debug("pid: %d, name: %s, usage: %d\n", pid, name, usage);
+			snprintf(temp, BUFFER_TEMP_LEN, "%d\t%d\t%s\n", usage, pid, name);
+			strncat(buf, temp, BUFFER_TEMP_LEN);
+			pr_debug("buf: %s, temp: %s\n", buf, temp);
+			idx++;
+		}
+
+		tmp = kernel_write(fp, buf, size, 0);
+		if (tmp < 0)
+			pr_err("Fail to write KTOP_ACCU_FD\n");
+	}
+
+	if (fp)
+		filp_close(fp, NULL);
+	return;
+}
 
 #if USE_STATISTICS_STRATEGY_CONTINUOUS_3
 static void clear_current_pid_found_array(void)
@@ -507,14 +558,14 @@ static void htc_xo_vddmin_stat_show(void)
 
 	if (htc_get_xo_vddmin_info(&xo_count, &xo_time, &vddmin_count, &vddmin_time)) {
 		if (xo_count > prev_xo_count) {
-			pr_info("[K] XO: %u, %llums\n", xo_count - prev_xo_count,
+			k_pr_embedded("[K] XO: %u, %llums\n", xo_count - prev_xo_count,
 							xo_time - prev_xo_time);
 			prev_xo_count = xo_count;
 			prev_xo_time = xo_time;
 		}
 
 		if (vddmin_count > prev_vddmin_count) {
-			pr_info("[K] Vdd-min: %u, %llums\n", vddmin_count - prev_vddmin_count,
+			k_pr_embedded("[K] Vdd-min: %u, %llums\n", vddmin_count - prev_vddmin_count,
 							vddmin_time - prev_vddmin_time);
 			prev_vddmin_count = vddmin_count;
 			prev_vddmin_time = vddmin_time;
@@ -525,18 +576,34 @@ static void htc_xo_vddmin_stat_show(void)
 static void htc_idle_stat_show(void)
 {
 	int i = 0, cpu = 0;
+	int piece_size = 32;
+	int output_size = piece_size * (CONFIG_NR_CPUS + 1);
+	char output[output_size];
+	char piece[piece_size];
 
-	pr_info("[K] cpu_id\tcpu_state\tidle_count\tidle_time\n");
-	for (cpu = 0; cpu < CONFIG_NR_CPUS; cpu++) {
-		for (i = 0; i < 3; i++) {
-			if (htc_idle_stat[cpu][i].count) {
-				pr_info("[K]\t%d\tC%d\t\t%d\t\t%dms\n", cpu, i,
-					htc_idle_stat[cpu][i].count, htc_idle_stat[cpu][i].time / 1000);
+	for (i = 0; i < 3; i++) {
+		memset(output, 0, sizeof(output));
+		for (cpu = 0; cpu < CONFIG_NR_CPUS; cpu++) {
+			if (htc_idle_stat[cpu][i].count > 0) {
+				if (0 == strlen(output)) {
+					memset(piece, 0, sizeof(piece));
+					snprintf(piece, sizeof(piece), "C%d: ", i);
+					safe_strcat(output, piece);
+				} else {
+					safe_strcat(output, ",");
+				}
+				memset(piece, 0, sizeof(piece));
+				snprintf(piece, sizeof(piece), "(%d,%d,%dms)",
+					cpu,
+					htc_idle_stat[cpu][i].count,
+					htc_idle_stat[cpu][i].time / 1000);
+				safe_strcat(output, piece);
 			}
 		}
+		if (strlen(output) > 0) {
+			k_pr_embedded("[K] %s\n", output);
+		}
 	}
-	htc_xo_vddmin_stat_show();
-	msm_rpm_dump_stat();
 }
 
 #ifdef arch_idle_time
@@ -696,7 +763,7 @@ static void htc_kernel_top_cal(struct _htc_kernel_top *ktop, int type)
 	  return;
 
 	spin_lock_irqsave(&ktop->lock, flags);
-
+	rcu_read_lock();
 	
 	for_each_process(process) {
 		thread_group_cputime(process, &cputime);
@@ -711,6 +778,7 @@ static void htc_kernel_top_cal(struct _htc_kernel_top *ktop, int type)
 			}
 		}
 	}
+	rcu_read_unlock();
 	sort_cputime_by_pid(ktop->curr_proc_delta, ktop->curr_proc_pid, pid_cnt, ktop->top_loading_pid);
 
 	
@@ -724,7 +792,7 @@ static void htc_kernel_top_cal(struct _htc_kernel_top *ktop, int type)
 		htc_kernel_top_statistics_5_in_10(ktop);
 #endif
 	}
-
+	rcu_read_lock();
 	
 	for_each_process(process) {
 		if (process->pid < MAX_PID) {
@@ -732,6 +800,7 @@ static void htc_kernel_top_cal(struct _htc_kernel_top *ktop, int type)
 			ktop->prev_proc_stat[process->pid] = cputime.stime + cputime.utime;
 		}
 	}
+	rcu_read_unlock();
 	memcpy(&ktop->prev_cpustat, &ktop->curr_cpustat, sizeof(struct kernel_cpustat));
 	spin_unlock_irqrestore(&ktop->lock, flags);
 }
@@ -739,20 +808,39 @@ static void htc_kernel_top_cal(struct _htc_kernel_top *ktop, int type)
 static void htc_kernel_top_show(struct _htc_kernel_top *ktop, int type)
 {
 	int top_n_pid = 0, i;
+	char piece[32];
+	char output[256];
 
-	
-	pr_info("[K]%sCPU Usage\t\tPID\t\tName\n", type == KERNEL_TOP_ACCU ? "[KTOP]" : " ");
+    
+	memset(output, 0, sizeof(output));
+	k_pr_info("[K]%sCPU Usage\t\tPID\t\tName\n", type == KERNEL_TOP_ACCU ? "[KTOP]" : " ");
 	for (i = 0; i < NUM_BUSY_THREAD_CHECK; i++) {
+		memset(piece, 0, sizeof(piece));
 		if (ktop->cpustat_time > 0) {
 			top_n_pid = ktop->top_loading_pid[i];
-			pr_info("[K]%s%8lu%%\t\t%d\t\t%s\t\t%d\n", type == KERNEL_TOP_ACCU ? "[KTOP]" : " ",
+			k_pr_info("[K]%s%8lu%%\t\t%d\t\t%s\t\t%d\n", type == KERNEL_TOP_ACCU ? "[KTOP]" : " ",
 				ktop->curr_proc_delta[top_n_pid] * 100 / ktop->cpustat_time,
 				top_n_pid,
 				ktop->task_ptr_array[top_n_pid]->comm,
 				ktop->curr_proc_delta[top_n_pid]);
+			if (type == KERNEL_TOP_ACCU) {
+				snprintf(piece, sizeof(piece), "(%lu%%,%d,%s)",
+					ktop->curr_proc_delta[top_n_pid] * 100 / ktop->cpustat_time,
+					top_n_pid,
+					ktop->task_ptr_array[top_n_pid]->comm);
+				if (0 == strlen(output)){
+					safe_strcat(output, piece);
+				} else {
+					safe_strcat(output, ",");
+					safe_strcat(output, piece);
+				}
+			}
 		}
-
 	}
+	if (type == KERNEL_TOP_ACCU) {
+		k_pr_embedded("[K][KTOP] %s\n", output);
+	}
+
 	memset(ktop->curr_proc_delta, 0, sizeof(int) * MAX_PID);
 	memset(ktop->task_ptr_array, 0, sizeof(int) * MAX_PID);
 	memset(ktop->curr_proc_pid, 0, sizeof(int) * MAX_PID);
@@ -766,14 +854,27 @@ static void htc_show_sensor_temp(void)
 	int ret, id, i;
 	long temp;
 	char *sensors[] = {"case_therm"};
+    char piece[32];
+	char output[256];
 
+	memset(output, 0, sizeof(output));
 	for (i = 0; i < ARRAY_SIZE(sensors); i++) {
 		id = sensor_get_id(sensors[i]);
 		if (id >= 0) {
 			temp = 0;
 			ret = sensor_get_temp(id, &temp);
-			pr_info("[K][PM] %s (id: %d): %ld degC (err: %d)\n", sensors[i], id, temp, ret);
+			memset(piece, 0, sizeof(piece));
+			snprintf(piece, sizeof(piece), "%s(%d,%s,%ld,%d)",
+				strlen(output)>0 ? "," : "",
+				id,
+				sensors[i],
+				temp,
+				ret);
+			safe_strcat(output, piece);
 		}
+	}
+	if (strlen(output) > 0) {
+		k_pr_embedded("[K] sensor_temp: %s\n", output);
 	}
 }
 
@@ -844,7 +945,7 @@ static void htc_pm_monitor_work_func(struct work_struct *work)
 
 	getnstimeofday(&ts);
 	rtc_time_to_tm(ts.tv_sec - (sys_tz.tz_minuteswest * 60), &tm);
-	pr_info("[K][PM] hTC PM Statistic start (%02d-%02d %02d:%02d:%02d)\n",
+	k_pr_info("[K][PM] hTC PM Statistic start (%02d-%02d %02d:%02d:%02d)\n",
 		tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 
 	
@@ -856,33 +957,38 @@ static void htc_pm_monitor_work_func(struct work_struct *work)
 	
 	htc_idle_stat_show();
 	htc_idle_stat_clear();
+	htc_xo_vddmin_stat_show();
+	msm_rpm_dump_stat(true);
 
 	
-	htc_timer_stats_onoff('0');
-	htc_timer_stats_show(300); 
-	htc_timer_stats_onoff('1');
-
-	
-	htc_print_active_wakeup_sources();
-	if (get_tamper_sf() == 0)
-		queue_delayed_work(htc_pm_monitor_wq, &ktop->dwork, msecs_to_jiffies(msm_htc_util_delay_time));
-	else
-		queue_delayed_work(htc_pm_monitor_wq, &ktop->dwork, msecs_to_jiffies(msm_htc_util_delay_time_son));
-	htc_kernel_top_cal(ktop, KERNEL_TOP);
-	htc_kernel_top_show(ktop, KERNEL_TOP);
-	htc_print_pon_reason();
-
-	all_vm_events(vm_event);
-	vm_event[PGPGIN] /= 2;		
-	vm_event[PGPGOUT] /= 2;
-
-	for(i = 0; i < NR_VM_EVENT_ITEMS; i++) {
-		if (vm_event[i] - prev_vm_event[i] > 0)
-			printk("[K] %s = %lu\n", vm_event_text[i], vm_event[i] - prev_vm_event[i]);
+	if (!is_commercial()) {
+		htc_timer_stats_onoff('0');
+		htc_timer_stats_show(300); 
+		htc_timer_stats_onoff('1');
 	}
-	memcpy(prev_vm_event, vm_event, sizeof(unsigned long) * NR_VM_EVENT_ITEMS);
 
-	pr_info("[K][PM] hTC PM Statistic done\n");
+	
+	htc_print_active_wakeup_sources(true);
+
+	queue_delayed_work(htc_pm_monitor_wq, &ktop->dwork, msecs_to_jiffies(msm_htc_util_delay_time));
+
+	if (!is_commercial()) {
+		htc_kernel_top_cal(ktop, KERNEL_TOP);
+		htc_kernel_top_show(ktop, KERNEL_TOP);
+		htc_print_pon_reason();
+
+		all_vm_events(vm_event);
+		vm_event[PGPGIN] /= 2;		
+		vm_event[PGPGOUT] /= 2;
+
+		for(i = 0; i < NR_VM_EVENT_ITEMS; i++) {
+			if (vm_event[i] - prev_vm_event[i] > 0)
+				printk("[K] %s = %lu\n", vm_event_text[i], vm_event[i] - prev_vm_event[i]);
+		}
+		memcpy(prev_vm_event, vm_event, sizeof(unsigned long) * NR_VM_EVENT_ITEMS);
+	}
+
+	k_pr_info("[K][PM] hTC PM Statistic done\n");
 }
 
 static void htc_kernel_top_accumulation_monitor_work_func(struct work_struct *work)
@@ -901,15 +1007,16 @@ static void htc_kernel_top_accumulation_monitor_work_func(struct work_struct *wo
 	getnstimeofday(&ts);
 	rtc_time_to_tm(ts.tv_sec - (sys_tz.tz_minuteswest * 60), &tm);
 	if (pm_monitor_enabled)
-		printk("[K][KTOP] hTC Kernel Top Statistic start (%02d-%02d %02d:%02d:%02d) \n",
+		k_pr_info("[K][KTOP] hTC Kernel Top Statistic start (%02d-%02d %02d:%02d:%02d) \n",
 			tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 
 	queue_delayed_work(htc_kernel_top_monitor_wq, &ktop->dwork, msecs_to_jiffies(msm_htc_util_top_delay_time));
 	htc_kernel_top_cal(ktop, KERNEL_TOP_ACCU);
+	write_ktop_fd(ktop);
 	htc_kernel_top_show(ktop, KERNEL_TOP_ACCU);
 
 	if (pm_monitor_enabled)
-		printk("[K][KTOP] hTC Kernel Top Statistic done\n");
+		k_pr_info("[K][KTOP] hTC Kernel Top Statistic done\n");
 }
 
 void htc_monitor_init(void)
@@ -951,15 +1058,13 @@ void htc_monitor_init(void)
 		get_all_cpustat(&htc_kernel_top->curr_cpustat);
 	        get_all_cpustat(&htc_kernel_top->prev_cpustat);
 
-		INIT_DELAYED_WORK(&htc_kernel_top->dwork, htc_pm_monitor_work_func);
-		
-		if (get_tamper_sf() == 0)
-			queue_delayed_work(htc_pm_monitor_wq, &htc_kernel_top->dwork,
-						msecs_to_jiffies(msm_htc_util_delay_time));
-		else
-			queue_delayed_work(htc_pm_monitor_wq, &htc_kernel_top->dwork,
-                                                msecs_to_jiffies(msm_htc_util_delay_time_son));
+		if (is_commercial()) {
+			msm_htc_util_delay_time = MSM_HTC_UTIL_DELAY_TIME_COMMERCIAL;
+		}
 
+		INIT_DELAYED_WORK(&htc_kernel_top->dwork, htc_pm_monitor_work_func);
+		queue_delayed_work(htc_pm_monitor_wq, &htc_kernel_top->dwork,
+					msecs_to_jiffies(msm_htc_util_delay_time));
 	}
 
 	if (htc_kernel_top_monitor_wq == NULL) {

@@ -470,11 +470,25 @@ static int ov4688_read_fuseid(struct sensorb_cfg_data *cdata,
 	struct msm_sensor_ctrl_t *s_ctrl)
 {
     #define OV4688_OTP_SIZE 0x07
+    /*
+    OTP Location
+
+    Burn in times						1st(Layer 0)	2nd(Layer 1)	3rd(Layer 2)
+
+	0 Module vendor 					0x126			0x144			0x162
+	1 LENS							0x127			0x145			0x163
+	2 Sensor Version					0x128			0x146			0x164
+	3 Module ID 						0x110			0x12e			0x14c
+	4 Module ID 						0x111			0x12f			0x14d
+	5 Module ID 						0x112			0x130			0x14e
+
+	6 Checksum of Information		0x12d			0x14b			0x169
+    */
 
     const short addr[3][OV4688_OTP_SIZE] = {
-        {0x126, 0x127, 0x128, 0x110, 0x111, 0x112, 0x12d}, 
-        {0x144, 0x145, 0x146, 0x12e, 0x12f, 0x130, 0x14b}, 
-        {0x162, 0x163, 0x164, 0x14c, 0x14d, 0x14e, 0x169}, 
+        {0x126, 0x127, 0x128, 0x110, 0x111, 0x112, 0x12d}, // layer 1
+        {0x144, 0x145, 0x146, 0x12e, 0x12f, 0x130, 0x14b}, // layer 2
+        {0x162, 0x163, 0x164, 0x14c, 0x14d, 0x14e, 0x169}, // layer 3
     };
     static uint8_t otp[OV4688_OTP_SIZE];
 	static int first= true;
@@ -488,7 +502,7 @@ static int ov4688_read_fuseid(struct sensorb_cfg_data *cdata,
 	if (first) {
 	    first = false;
 
-        
+        /*Must finish the recommend settings before otp read*/
         rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write(s_ctrl->sensor_i2c_client, 0x0100, 0x01, MSM_CAMERA_I2C_BYTE_DATA);
         if (rc < 0)
           pr_err("%s: i2c_write b 0x0100 fail\n", __func__);
@@ -513,12 +527,12 @@ static int ov4688_read_fuseid(struct sensorb_cfg_data *cdata,
 
         msleep(10);
 
-        
+        // start from layer 2
         for (j=2; j>=0; j--)
         {
             for (i=0; i<OV4688_OTP_SIZE; ++i)
             {
-                rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_read(s_ctrl->sensor_i2c_client, addr[j][i]+offset, &read_data, MSM_CAMERA_I2C_BYTE_DATA);
+                rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_read(s_ctrl->sensor_i2c_client, addr[j][i]+offset, &read_data, MSM_CAMERA_I2C_BYTE_DATA);//0x37c2
                 if (rc < 0)
                 {
                     pr_err("%s: i2c_read 0x%x failed\n", __func__, addr[j][i]);
@@ -572,11 +586,25 @@ static int ov4688_read_fuseid32(struct sensorb_cfg_data32 *cdata,
 	struct msm_sensor_ctrl_t *s_ctrl)
 {
 	#define OV4688_OTP_SIZE 0x07
+	/*
+	OTP Location
+
+	Burn in times						1st(Layer 0)	2nd(Layer 1)	3rd(Layer 2)
+
+	0 Module vendor 					0x126			0x144			0x162
+	1 LENS								0x127			0x145			0x163
+	2 Sensor Version					0x128			0x146			0x164
+	3 Module ID 						0x110			0x12e			0x14c
+	4 Module ID 						0x111			0x12f			0x14d
+	5 Module ID 						0x112			0x130			0x14e
+
+	6 Checksum of Information		0x12d			0x14b			0x169
+	*/
 
 	const short addr[3][OV4688_OTP_SIZE] = {
-      {0x126, 0x127, 0x128, 0x110, 0x111, 0x112, 0x12d}, 
-      {0x144, 0x145, 0x146, 0x12e, 0x12f, 0x130, 0x14b}, 
-      {0x162, 0x163, 0x164, 0x14c, 0x14d, 0x14e, 0x169}, 
+      {0x126, 0x127, 0x128, 0x110, 0x111, 0x112, 0x12d}, // layer 1
+      {0x144, 0x145, 0x146, 0x12e, 0x12f, 0x130, 0x14b}, // layer 2
+      {0x162, 0x163, 0x164, 0x14c, 0x14d, 0x14e, 0x169}, // layer 3
 	};
 	static uint8_t otp[OV4688_OTP_SIZE];
 	static int first= true;
@@ -590,7 +618,7 @@ static int ov4688_read_fuseid32(struct sensorb_cfg_data32 *cdata,
 	if (first) {
         first = false;
 
-        
+        /*Must finish the recommend settings before otp read*/
         rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write(s_ctrl->sensor_i2c_client, 0x0100, 0x01, MSM_CAMERA_I2C_BYTE_DATA);
         if (rc < 0)
           pr_err("%s: i2c_write b 0x0100 fail\n", __func__);
@@ -615,13 +643,13 @@ static int ov4688_read_fuseid32(struct sensorb_cfg_data32 *cdata,
 
 		msleep(10);
 
-		
+		// start from layer 2
 		for (j=2; j>=0; j--)
 		{
 			for (i=0; i<OV4688_OTP_SIZE; ++i)
 			{
 				rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_read(
-					s_ctrl->sensor_i2c_client, addr[j][i]+offset, &read_data, MSM_CAMERA_I2C_BYTE_DATA);
+					s_ctrl->sensor_i2c_client, addr[j][i]+offset, &read_data, MSM_CAMERA_I2C_BYTE_DATA);//0x37c2
 				if (rc < 0)
 				{
 					pr_err("%s: i2c_read 0x%x failed\n", __func__, addr[j][i]);

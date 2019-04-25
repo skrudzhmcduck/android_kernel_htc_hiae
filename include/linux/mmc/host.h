@@ -16,6 +16,7 @@
 #include <linux/device.h>
 #include <linux/fault-inject.h>
 #include <linux/wakelock.h>
+#include <linux/circ_buf.h>
 
 #include <linux/mmc/core.h>
 #include <linux/mmc/pm.h>
@@ -104,8 +105,7 @@ struct mmc_cmdq_host_ops {
 	int (*enable)(struct mmc_host *host);
 	void (*disable)(struct mmc_host *host, bool soft);
 	int (*request)(struct mmc_host *host, struct mmc_request *mrq);
-	void (*post_req)(struct mmc_host *host, struct mmc_request *mrq,
-			 int err);
+	void (*post_req)(struct mmc_host *host, int tag, int err);
 	int (*halt)(struct mmc_host *host, bool halt);
 	void (*reset)(struct mmc_host *host, bool soft);
 	void (*dumpstate)(struct mmc_host *host);
@@ -135,6 +135,7 @@ struct mmc_host_ops {
 
 	
 	int	(*execute_tuning)(struct mmc_host *host, u32 opcode);
+	int	(*enhanced_strobe)(struct mmc_host *host);
 	int	(*select_drive_strength)(unsigned int max_dtr, int host_drv, int card_drv);
 	void	(*hw_reset)(struct mmc_host *host);
 	void	(*card_event)(struct mmc_host *host);
@@ -201,9 +202,12 @@ struct mmc_cmdq_context_info {
 #define	CMDQ_STATE_DCMD_ACTIVE 1
 #define	CMDQ_STATE_HALT 2
 #define	CMDQ_STATE_RPM_ACTIVE 3
+#define	CMDQ_STATE_CQ_DISABLE 4
+#define	CMDQ_STATE_REQ_TIMED_OUT 5
 	
 	unsigned long	req_starved;
 	wait_queue_head_t	queue_empty_wq;
+	int active_small_sector_read_reqs;
 };
 
 struct mmc_context_info {
@@ -299,7 +303,7 @@ struct mmc_host {
 
 #define MMC_CAP2_BOOTPART_NOACC	(1 << 0)	
 #define MMC_CAP2_CACHE_CTRL	(1 << 1)	
-#define MMC_CAP2_POWEROFF_NOTIFY (1 << 2)	
+#define MMC_CAP2_FULL_PWR_CYCLE	(1 << 2)	
 #define MMC_CAP2_NO_MULTI_READ	(1 << 3)	
 #define MMC_CAP2_NO_SLEEP_CMD	(1 << 4)	
 #define MMC_CAP2_HS200_1_8V_SDR	(1 << 5)        
@@ -331,6 +335,7 @@ struct mmc_host {
 				 MMC_CAP2_HS400_1_2V)
 #define MMC_CAP2_NONHOTPLUG	(1 << 25)	
 #define MMC_CAP2_CMD_QUEUE	(1 << 26)	
+#define MMC_CAP2_BROKEN_PWR_CYCLE (1 << 27)	
 	mmc_pm_flag_t		pm_caps;	
 
 	int			clk_requests;	
@@ -368,6 +373,7 @@ struct mmc_host {
 
 	int			rescan_disable;	
 	int			rescan_entered;	
+	int			retry_disable;	
 
 	struct mmc_card		*card;		
 
@@ -453,13 +459,19 @@ struct mmc_host {
 		
 		unsigned long wkbytes_drv;
 		ktime_t workload_time;
+
+		
+		unsigned long cmdq_read_map;
+		unsigned long cmdq_write_map;
+		ktime_t cmdq_read_start;
+		ktime_t cmdq_write_start;
 	} perf;
 	bool perf_enable;
-	struct {
-	       bool initialized;
-	       bool enable;
-	       struct delayed_work work;
-	} clk_delay_scaling;
+	
+#define CIRC_BUFFER_SIZE    4096
+	struct circ_buf mmc_circbuf;
+	struct proc_dir_entry *mmc_circ_proc;
+	bool circbuf_enable;
 	struct {
 		unsigned long	busy_time_us;
 		unsigned long	window_time;
@@ -486,6 +498,8 @@ struct mmc_host {
 	unsigned int		crc_count;
 	bool			wakeup_on_idle;
 	struct mmc_cmdq_context_info	cmdq_ctx;
+	int num_cq_slots;
+	int dcmd_cq_slot;
 	void *cmdq_private;
 	struct mmc_request	*err_mrq;
 	unsigned long		private[0] ____cacheline_aligned;
@@ -539,12 +553,11 @@ int mmc_resume_host(struct mmc_host *);
 
 int mmc_power_save_host(struct mmc_host *host);
 int mmc_power_restore_host(struct mmc_host *host);
+int mmc_power_restore_broken_host(struct mmc_host *host);
 
 void mmc_detect_change(struct mmc_host *, unsigned long delay);
 void mmc_debounce1(struct mmc_host *);
 void mmc_request_done(struct mmc_host *, struct mmc_request *);
-
-int mmc_cache_ctrl(struct mmc_host *, u8);
 
 static inline void mmc_signal_sdio_irq(struct mmc_host *host)
 {
@@ -632,6 +645,11 @@ static inline int mmc_host_packed_wr(struct mmc_host *host)
 	return host->caps2 & MMC_CAP2_PACKED_WR;
 }
 
+static inline bool mmc_host_broken_pwr_cycle(struct mmc_host *host)
+{
+	return host->caps2 & MMC_CAP2_BROKEN_PWR_CYCLE;
+}
+
 static inline void mmc_host_set_halt(struct mmc_host *host)
 {
 	set_bit(CMDQ_STATE_HALT, &host->cmdq_ctx.curr_state);
@@ -645,6 +663,21 @@ static inline void mmc_host_clr_halt(struct mmc_host *host)
 static inline int mmc_host_halt(struct mmc_host *host)
 {
 	return test_bit(CMDQ_STATE_HALT, &host->cmdq_ctx.curr_state);
+}
+
+static inline void mmc_host_set_cq_disable(struct mmc_host *host)
+{
+	set_bit(CMDQ_STATE_CQ_DISABLE, &host->cmdq_ctx.curr_state);
+}
+
+static inline void mmc_host_clr_cq_disable(struct mmc_host *host)
+{
+	clear_bit(CMDQ_STATE_CQ_DISABLE, &host->cmdq_ctx.curr_state);
+}
+
+static inline int mmc_host_cq_disable(struct mmc_host *host)
+{
+	return test_bit(CMDQ_STATE_CQ_DISABLE, &host->cmdq_ctx.curr_state);
 }
 
 #ifdef CONFIG_MMC_CLKGATE

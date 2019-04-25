@@ -224,14 +224,18 @@ void wsa881x_regmap_defaults(struct regmap *regmap, u8 version)
 
 	switch (version) {
 	case WSA881X_1_X:
-		ret = regmap_register_patch(regmap,
-					    wsa881x_rev_1_x,
-					    ARRAY_SIZE(wsa881x_rev_1_x));
+		regcache_cache_only(regmap, true);
+		ret = regmap_multi_reg_write(regmap,
+					     wsa881x_rev_1_x,
+					     ARRAY_SIZE(wsa881x_rev_1_x));
+		regcache_cache_only(regmap, false);
 		break;
 	case WSA881X_2_0:
-		ret = regmap_register_patch(regmap,
-					    wsa881x_rev_2_0,
-					    ARRAY_SIZE(wsa881x_rev_2_0));
+		regcache_cache_only(regmap, true);
+		ret = regmap_multi_reg_write(regmap,
+					     wsa881x_rev_2_0,
+					     ARRAY_SIZE(wsa881x_rev_2_0));
+		regcache_cache_only(regmap, false);
 		break;
 	default:
 		pr_debug("%s: unknown version", __func__);
@@ -298,4 +302,5 @@ struct regmap_config wsa881x_regmap_config = {
 	.readable_reg = wsa881x_readable_register,
 	.reg_format_endian = REGMAP_ENDIAN_NATIVE,
 	.val_format_endian = REGMAP_ENDIAN_NATIVE,
+	.can_multi_write = true,
 };

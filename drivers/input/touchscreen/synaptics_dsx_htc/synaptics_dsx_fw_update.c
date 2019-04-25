@@ -16,10 +16,14 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  * GNU General Public License for more details.
  */
+#include <linux/ctype.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
+#include <linux/mutex.h>
+#endif
 #include <linux/delay.h>
 #include <linux/input.h>
 #include <linux/firmware.h>
@@ -29,6 +33,9 @@
 #include "synaptics_dsx_core.h"
 #ifdef CONFIG_TOUCHSCREEN_TOUCH_FW_UPDATE
 #include <linux/input/touch_fw_update.h>
+#endif
+#ifdef CONFIG_SYNC_TOUCH_STATUS
+#include <linux/CwMcuSensor.h>
 #endif
 
 #define FW_IMAGE_NAME "synaptics.img"
@@ -115,12 +122,17 @@
 struct touch_fwu_notifier synaptics_tp_notifier;
 static void synaptics_fwu_progress(int percentage);
 #endif
+static uint8_t mfg_flag = 0;
+#define LCM_CMD_SIZE 256
+char panel_name[LCM_CMD_SIZE];
 
 extern char *htc_get_bootmode(void);
 static int fwu_do_reflash(void);
 
 static int fwu_recovery_check_status(void);
+static int check_img_version(const struct firmware *, int *, unsigned int);
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
 static ssize_t fwu_sysfs_show_image(struct file *data_file,
 		struct kobject *kobj, struct bin_attribute *attributes,
 		char *buf, loff_t pos, size_t count);
@@ -173,6 +185,7 @@ static ssize_t fwu_sysfs_guest_code_block_count_show(struct device *dev,
 
 static ssize_t fwu_sysfs_write_guest_code_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count);
+#endif
 
 enum f34_version {
 	F34_V0 = 0,
@@ -615,6 +628,7 @@ struct synaptics_rmi4_fwu_handle {
 	struct wake_lock fwu_wake_lock;
 };
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
 static struct bin_attribute dev_attr_data = {
 	.attr = {
 		.name = "data",
@@ -672,10 +686,14 @@ static struct device_attribute attrs[] = {
 			synaptics_rmi4_show_error,
 			fwu_sysfs_write_guest_code_store),
 };
+#endif
 
 static struct synaptics_rmi4_fwu_handle *fwu;
 
 DECLARE_COMPLETION(fwu_remove_complete);
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
+DEFINE_MUTEX(fwu_sysfs_mutex);
+#endif
 
 static uint32_t syn_crc(uint16_t *data, uint32_t len)
 {
@@ -689,7 +707,7 @@ static uint32_t syn_crc(uint16_t *data, uint32_t len)
 			sum2 = (sum2 & 0xFFFF) + (sum2 >> 16);
 		}
 	} else {
-		pr_err("%s: data incorrect", __func__);
+		pr_err("%s: data incorrect\n", __func__);
 		return (0xFFFF | 0xFFFF << 16);
 	}
 	return sum1 | (sum2 << 16);
@@ -2145,15 +2163,15 @@ static int fwu_read_f34_blocks(unsigned short block_cnt, unsigned char cmd)
 static int fwu_get_image_firmware_id(unsigned int *fw_id)
 {
 	int retval;
-	unsigned char index = 0;
-	char *strptr;
 	char *firmware_id;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
 	if (fwu->img.contains_firmware_id) {
 		*fw_id = fwu->img.firmware_id;
 	} else {
-		strptr = strnstr(fwu->image_name, "PR", MAX_IMAGE_NAME_LEN);
+		size_t index, max_index;
+		unsigned char *strptr = strnstr(fwu->image_name, "PR", MAX_IMAGE_NAME_LEN);
+
 		if (!strptr) {
 			dev_err(rmi4_data->pdev->dev.parent,
 					"%s: No valid PR number (PRxxxxxxx) "
@@ -2170,7 +2188,11 @@ static int fwu_get_image_firmware_id(unsigned int *fw_id)
 					__func__);
 			return -ENOMEM;
 		}
-		while (strptr[index] >= '0' && strptr[index] <= '9') {
+
+		max_index = min((ptrdiff_t)(MAX_FIRMWARE_ID_LEN - 1),
+				&fwu->image_name[MAX_IMAGE_NAME_LEN] - strptr);
+		index = 0;
+		while (index < max_index && isdigit(strptr[index])) {
 			firmware_id[index] = strptr[index];
 			index++;
 		}
@@ -2277,7 +2299,7 @@ static enum flash_area fwu_go_nogo(void)
 	memset(str_buf, 0, sizeof(str_buf));
 	for (ii = 0; ii < config_id_size; ii++) {
 		snprintf(tmp_buf, 3, "%02x ", fwu->config_id[ii]);
-		strcat(str_buf, tmp_buf);
+		strlcat(str_buf, tmp_buf, sizeof(str_buf));
 	}
 
 	dev_info(rmi4_data->pdev->dev.parent,
@@ -2288,7 +2310,7 @@ static enum flash_area fwu_go_nogo(void)
 	memset(str_buf, 0, sizeof(str_buf));
 	for (ii = 0; ii < config_id_size; ii++) {
 		snprintf(tmp_buf, 3, "%02x", fwu->img.ui_config.data[ii]);
-		strcat(str_buf, tmp_buf);
+		strlcat(str_buf, tmp_buf, sizeof(str_buf));
 	}
 
 	dev_info(rmi4_data->pdev->dev.parent,
@@ -3199,6 +3221,7 @@ static int fwu_do_reflash(void)
 	return retval;
 }
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
 static int fwu_do_read_config(void)
 {
 	int retval;
@@ -3276,6 +3299,7 @@ exit:
 
 	return retval;
 }
+#endif
 
 static int fwu_do_lockdown(void)
 {
@@ -3313,6 +3337,7 @@ static int fwu_do_lockdown(void)
 	return retval;
 }
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
 static int fwu_start_write_guest_code(void)
 {
 	int retval;
@@ -3493,6 +3518,7 @@ exit:
 
 	return retval;
 }
+#endif
 
 static int fwu_start_reflash(void)
 {
@@ -3675,6 +3701,7 @@ static int fwu_recovery_check_status(void)
 	return 0;
 }
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
 static int fwu_recovery_erase_all(void)
 {
 	int retval;
@@ -3868,6 +3895,7 @@ exit:
 
 	return retval;
 }
+#endif
 
 int synaptics_fw_updater(const unsigned char *fw_data)
 {
@@ -3902,6 +3930,10 @@ static int fwu_do_write_config(uint8_t *config_data)
 
 	return fwu_write_configuration();
 }
+
+#ifdef CONFIG_LEDS_SYNC_TOUCH_SOLUTION
+extern void set_led_touch_solution(uint16_t solution);
+#endif
 
 int synaptics_config_updater(struct synaptics_dsx_board_data *bdata)
 {
@@ -3953,7 +3985,7 @@ int synaptics_config_updater(struct synaptics_dsx_board_data *bdata)
 	memset(str_buf, 0, sizeof(str_buf));
 	for (ii = 0; ii < config_id_size; ii++) {
 		snprintf(tmp_buf, 3, "%02x ", config_id[ii]);
-		strcat(str_buf, tmp_buf);
+		strlcat(str_buf, tmp_buf, sizeof(str_buf));
 	}
 
 	dev_info(rmi4_data->pdev->dev.parent,
@@ -3982,7 +4014,7 @@ int synaptics_config_updater(struct synaptics_dsx_board_data *bdata)
 	while (cfg_table[i].pr_number > device_fw_id) {
 		i++;
 		if (i == config_num) {
-			dev_info(rmi4_data->pdev->dev.parent, " %s: no config data\n", __func__);
+			dev_info(rmi4_data->pdev->dev.parent, " %s: no config data - pr_number does not match\n", __func__);
 			goto exit;
 		}
 	}
@@ -3990,7 +4022,7 @@ int synaptics_config_updater(struct synaptics_dsx_board_data *bdata)
 	while (cfg_table[i].eng_id != eng_id) {
 		i++;
 		if (i == config_num) {
-			dev_info(rmi4_data->pdev->dev.parent, " %s: eng_id does not match\n", __func__);
+			dev_info(rmi4_data->pdev->dev.parent, " %s: no config data - eng_id does not match\n", __func__);
 			goto exit;
 		}
 	}
@@ -4000,11 +4032,37 @@ int synaptics_config_updater(struct synaptics_dsx_board_data *bdata)
 			&& (cfg_table[i].sensor_id != (rmi4_data->tw_vendor | SENSOR_ID_CHECKING_EN))) {
 			i++;
 			if (i == config_num) {
-				dev_info(rmi4_data->pdev->dev.parent, " %s: no config data\n", __func__);
+				dev_info(rmi4_data->pdev->dev.parent, " %s: no config data - sensor_id does not match\n", __func__);
 				goto exit;
 			}
 		}
 	}
+
+	while (cfg_table[i].disp_panel
+		&& (!strstr(panel_name, cfg_table[i].disp_panel))) {
+		i++;
+		if (i == config_num) {
+			dev_info(rmi4_data->pdev->dev.parent, " %s: no config data - disp_panel does not match\n", __func__);
+			goto exit;
+		}
+	}
+	if (cfg_table[i].sensor_id != (rmi4_data->tw_vendor | SENSOR_ID_CHECKING_EN))
+	{
+		dev_info(rmi4_data->pdev->dev.parent, " %s: no config data - cross_combination does not match\n", __func__);
+		goto exit;
+	}
+	else if (cfg_table[i].disp_panel)
+		strlcpy(rmi4_data->lcm_vendor, cfg_table[i].disp_panel, LCM_VENDER_SIZE);
+
+#ifdef CONFIG_SYNC_TOUCH_STATUS
+	touch_solution(cfg_table[i].tp_lcm_src);
+	pr_info("%s: Register to sensor_hub driver(%d)\n", __func__, cfg_table[i].tp_lcm_src);
+#endif
+
+#ifdef CONFIG_LEDS_SYNC_TOUCH_SOLUTION
+	set_led_touch_solution(rmi4_data->tw_vendor);
+	pr_info("%s: Register to led driver(%d)\n", __func__, rmi4_data->tw_vendor);
+#endif
 
 	if (cfg_table[i].cover_setting_size != 0) {
 		memcpy(rmi4_data->cover_setting, cfg_table[i].cover_setting, sizeof(rmi4_data->cover_setting));
@@ -4019,7 +4077,7 @@ int synaptics_config_updater(struct synaptics_dsx_board_data *bdata)
 	memset(str_buf, 0, sizeof(str_buf));
 	for (ii = 0; ii < config_id_size; ii++) {
 		snprintf(tmp_buf, 3, "%02x", config_data[ii]);
-		strcat(str_buf, tmp_buf);
+		strlcat(str_buf, tmp_buf, sizeof(str_buf));
 	}
 
 	dev_info(rmi4_data->pdev->dev.parent,
@@ -4030,10 +4088,15 @@ int synaptics_config_updater(struct synaptics_dsx_board_data *bdata)
 	pr_info("%s: config_size = %d\n", __func__, config_size);
 	if (config_size > SYN_CONFIG_SIZE)
 		config_size = SYN_CONFIG_SIZE;
+	else if (config_size < 4) {
+		dev_err(rmi4_data->pdev->dev.parent,
+			"%s: incorrect config_size\n", __func__);
+		goto exit;
+	}
 	crc_checksum = syn_crc((uint16_t *)config_data, (config_size)/2-2);
 	if (crc_checksum == 0xFFFFFFFF) {
 		dev_err(rmi4_data->pdev->dev.parent,
-			"%s: crc_checksum Error", __func__);
+			"%s: crc_checksum Error\n", __func__);
 		goto exit;
 	}
 	memcpy(&config_data[(config_size) - 4], &crc_checksum, 4);
@@ -4089,9 +4152,61 @@ exit:
 EXPORT_SYMBOL(synaptics_config_updater);
 
 #ifdef DO_STARTUP_FW_UPDATE
+void fwu_get_mfg_startup_fw(unsigned char **fw_data)
+{
+	struct synaptics_dsx_board_data *bdata = fwu->rmi4_data->hw_if->board_data;
+	int retval = 0, tagLen = 0;
+	const struct firmware *fw_entry = NULL;
+	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
+	unsigned char *fw_source = NULL;
+
+	pr_info("%s ++\n", __func__);
+
+	rmi4_data->stay_awake = true;
+
+	retval = secure_memcpy(fwu->image_name, MAX_IMAGE_NAME_LEN,
+			FW_IMAGE_NAME, sizeof(FW_IMAGE_NAME),
+			sizeof(FW_IMAGE_NAME));
+	if (retval < 0) {
+		dev_err(rmi4_data->pdev->dev.parent,
+				"%s: Failed to copy image file name\n",
+				__func__);
+		return;
+	}
+	dev_dbg(rmi4_data->pdev->dev.parent,
+			"%s: Requesting firmware image %s\n",
+			__func__, fwu->image_name);
+
+	retval = request_firmware(&fw_entry, fwu->image_name,
+			rmi4_data->pdev->dev.parent);
+	if (retval != 0) {
+		dev_err(rmi4_data->pdev->dev.parent,
+				"%s: Firmware image %s not available\n",
+				__func__, fwu->image_name);
+		return;
+	}
+	dev_dbg(rmi4_data->pdev->dev.parent,
+			"%s: Firmware image size = %zu\n",
+			__func__, fw_entry->size);
+
+
+	if (!check_img_version(fw_entry, &tagLen, rmi4_data->firmware_id)) {
+		pr_info("%s: Same FW version, skip FW update\n", __func__);
+		return;
+	}
+	fw_source = kzalloc(fw_entry->size-tagLen, GFP_KERNEL);
+	memcpy(fw_source, fw_entry->data+tagLen, fw_entry->size-tagLen);
+	*fw_data = fw_source;
+
+	bdata->update_feature |= SYNAPTICS_RMI4_UPDATE_IMAGE;
+
+	rmi4_data->stay_awake = false;
+}
+
 static void fwu_startup_fw_update_work(struct work_struct *work)
 {
 	struct synaptics_dsx_board_data *bdata = fwu->rmi4_data->hw_if->board_data;
+	unsigned char *fw_source = NULL;
 
 	if ((strcmp(htc_get_bootmode(), "download") == 0)
 		|| (strcmp(htc_get_bootmode(), "RUU") == 0)) {
@@ -4101,30 +4216,41 @@ static void fwu_startup_fw_update_work(struct work_struct *work)
 
 	wake_lock(&fwu->fwu_wake_lock);
 
+	if (mfg_flag && !!strcmp(htc_get_bootmode(), "ftm"))
+		fwu_get_mfg_startup_fw(&fw_source);
+
 	if (bdata->update_feature & SYNAPTICS_RMI4_UPDATE_IMAGE)
-		synaptics_fw_updater(NULL);
+		synaptics_fw_updater(fw_source);
 
 	if (bdata->update_feature & SYNAPTICS_RMI4_UPDATE_CONFIG)
 		synaptics_config_updater(bdata);
 
 	wake_unlock(&fwu->fwu_wake_lock);
 
+	if (fw_source)
+		kfree(fw_source);
+
 	return;
 }
 #endif
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
 static ssize_t fwu_sysfs_show_image(struct file *data_file,
 		struct kobject *kobj, struct bin_attribute *attributes,
 		char *buf, loff_t pos, size_t count)
 {
-	int retval;
+	ssize_t retval;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
+
+	if (!mutex_trylock(&fwu_sysfs_mutex))
+		return -EBUSY;
 
 	if (count < fwu->config_size) {
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Not enough space (%zu bytes) in buffer\n",
 				__func__, count);
-		return -EINVAL;
+		retval = -EINVAL;
+		goto show_image_exit;
 	}
 
 	retval = secure_memcpy(buf, count, fwu->read_config_buf,
@@ -4133,18 +4259,25 @@ static ssize_t fwu_sysfs_show_image(struct file *data_file,
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to copy config data\n",
 				__func__);
-		return retval;
+		goto show_image_exit;
 	}
 
-	return fwu->config_size;
+	retval = fwu->config_size;
+
+show_image_exit:
+	mutex_unlock(&fwu_sysfs_mutex);
+	return retval;
 }
 
 static ssize_t fwu_sysfs_store_image(struct file *data_file,
 		struct kobject *kobj, struct bin_attribute *attributes,
 		char *buf, loff_t pos, size_t count)
 {
-	int retval;
+	ssize_t retval;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
+
+	if (!mutex_trylock(&fwu_sysfs_mutex))
+		return -EBUSY;
 
 	retval = secure_memcpy(&fwu->ext_data_source[fwu->data_pos],
 			fwu->image_size - fwu->data_pos, buf, count, count);
@@ -4152,24 +4285,30 @@ static ssize_t fwu_sysfs_store_image(struct file *data_file,
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to copy image data\n",
 				__func__);
-		return retval;
+		goto store_image_exit;
 	}
 
 	fwu->data_pos += count;
+	retval = count;
 
-	return count;
+store_image_exit:
+	mutex_unlock(&fwu_sysfs_mutex);
+	return retval;
 }
 
 static ssize_t fwu_sysfs_do_recovery_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
-	int retval;
+	ssize_t retval;
 	unsigned int input;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
+	if (!mutex_trylock(&fwu_sysfs_mutex))
+		return -EBUSY;
+
 	if (sscanf(buf, "%u", &input) != 1) {
 		retval = -EINVAL;
-		goto exit;
+		goto recovery_store_exit;
 	}
 
 	if (!fwu->in_ub_mode) {
@@ -4177,28 +4316,32 @@ static ssize_t fwu_sysfs_do_recovery_store(struct device *dev,
 				"%s: Not in microbootloader mode\n",
 				__func__);
 		retval = -EINVAL;
-		goto exit;
+		goto recovery_store_exit;
 	}
 
-	if (!fwu->ext_data_source)
-		return -EINVAL;
-	else
+	if (!fwu->ext_data_source) {
+		retval = -EINVAL;
+		goto recovery_store_exit;
+	} else {
 		fwu->image = fwu->ext_data_source;
+	}
 
 	retval = fwu_start_recovery();
 	if (retval < 0) {
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to do recovery\n",
 				__func__);
-		goto exit;
+		goto recovery_store_free_exit;
 	}
 
 	retval = count;
 
-exit:
+recovery_store_free_exit:
 	kfree(fwu->ext_data_source);
 	fwu->ext_data_source = NULL;
 	fwu->image = NULL;
+recovery_store_exit:
+	mutex_unlock(&fwu_sysfs_mutex);
 	return retval;
 }
 
@@ -4209,9 +4352,12 @@ static ssize_t fwu_sysfs_do_reflash_store(struct device *dev,
 	unsigned int input;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
+	if (!mutex_trylock(&fwu_sysfs_mutex))
+		return -EBUSY;
+
 	if (sscanf(buf, "%u", &input) != 1) {
 		retval = -EINVAL;
-		goto exit;
+		goto reflash_store_exit;
 	}
 
 	if (fwu->in_ub_mode) {
@@ -4219,9 +4365,10 @@ static ssize_t fwu_sysfs_do_reflash_store(struct device *dev,
 				"%s: In microbootloader mode\n",
 				__func__);
 		retval = -EINVAL;
-		goto exit;
+		goto reflash_store_exit;
 	}
 
+	
 	
 	
 	
@@ -4234,7 +4381,7 @@ static ssize_t fwu_sysfs_do_reflash_store(struct device *dev,
 
 	if ((input != NORMAL) && (input != FORCE)) {
 		retval = -EINVAL;
-		goto exit;
+		goto reflash_store_exit;
 	}
 
 	if (input == FORCE)
@@ -4245,12 +4392,12 @@ static ssize_t fwu_sysfs_do_reflash_store(struct device *dev,
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to do reflash\n",
 				__func__);
-		goto exit;
+		goto reflash_store_free_exit;
 	}
 
 	retval = count;
 
-exit:
+reflash_store_free_exit:
 	if (fwu->ext_data_source != NULL) {
 		kfree(fwu->ext_data_source);
 		fwu->ext_data_source = NULL;
@@ -4258,6 +4405,8 @@ exit:
 	fwu->image = NULL;
 	fwu->force_update = FORCE_UPDATE;
 	fwu->do_lockdown = DO_LOCKDOWN;
+reflash_store_exit:
+	mutex_unlock(&fwu_sysfs_mutex);
 	return retval;
 }
 
@@ -4268,14 +4417,17 @@ static ssize_t fwu_sysfs_write_config_store(struct device *dev,
 	unsigned int input;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
+	if (!mutex_trylock(&fwu_sysfs_mutex))
+		return -EBUSY;
+
 	if (sscanf(buf, "%u", &input) != 1) {
 		retval = -EINVAL;
-		goto exit;
+		goto write_config_store_exit;
 	}
 
 	if (input != 1) {
 		retval = -EINVAL;
-		goto exit;
+		goto write_config_store_exit;
 	}
 
 	if (fwu->in_ub_mode) {
@@ -4283,28 +4435,32 @@ static ssize_t fwu_sysfs_write_config_store(struct device *dev,
 				"%s: In microbootloader mode\n",
 				__func__);
 		retval = -EINVAL;
-		goto exit;
+		goto write_config_store_exit;
 	}
 
-	if (!fwu->ext_data_source)
-		return -EINVAL;
-	else
+	if (!fwu->ext_data_source) {
+		retval = -EINVAL;
+		goto write_config_store_exit;
+	} else {
 		fwu->image = fwu->ext_data_source;
+	}
 
 	retval = fwu_start_write_config();
 	if (retval < 0) {
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to write config\n",
 				__func__);
-		goto exit;
+		goto write_config_store_free_exit;
 	}
 
 	retval = count;
 
-exit:
+write_config_store_free_exit:
 	kfree(fwu->ext_data_source);
 	fwu->ext_data_source = NULL;
 	fwu->image = NULL;
+write_config_store_exit:
+	mutex_unlock(&fwu_sysfs_mutex);
 	return retval;
 }
 
@@ -4328,7 +4484,11 @@ static ssize_t fwu_sysfs_read_config_store(struct device *dev,
 		return -EINVAL;
 	}
 
+	if (!mutex_trylock(&fwu_sysfs_mutex))
+		return -EBUSY;
 	retval = fwu_do_read_config();
+	mutex_unlock(&fwu_sysfs_mutex);
+
 	if (retval < 0) {
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to read config\n",
@@ -4349,7 +4509,10 @@ static ssize_t fwu_sysfs_config_area_store(struct device *dev,
 	if (retval)
 		return retval;
 
+	if (!mutex_trylock(&fwu_sysfs_mutex))
+		return -EBUSY;
 	fwu->config_area = config_area;
+	mutex_unlock(&fwu_sysfs_mutex);
 
 	return count;
 }
@@ -4360,8 +4523,12 @@ static ssize_t fwu_sysfs_image_name_store(struct device *dev,
 	int retval;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
+	if (!mutex_trylock(&fwu_sysfs_mutex))
+		return -EBUSY;
 	retval = secure_memcpy(fwu->image_name, MAX_IMAGE_NAME_LEN,
 			buf, count, count);
+	mutex_unlock(&fwu_sysfs_mutex);
+
 	if (retval < 0) {
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to copy image file name\n",
@@ -4375,13 +4542,16 @@ static ssize_t fwu_sysfs_image_name_store(struct device *dev,
 static ssize_t fwu_sysfs_image_size_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
-	int retval;
+	ssize_t retval;
 	unsigned long size;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
 	retval = sstrtoul(buf, 10, &size);
 	if (retval)
 		return retval;
+
+	if (!mutex_trylock(&fwu_sysfs_mutex))
+		return -EBUSY;
 
 	fwu->image_size = size;
 	fwu->data_pos = 0;
@@ -4394,10 +4564,12 @@ static ssize_t fwu_sysfs_image_size_store(struct device *dev,
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to alloc mem for image data\n",
 				__func__);
-		return -ENOMEM;
+		retval = -ENOMEM;
+	} else {
+		retval = count;
 	}
-
-	return count;
+	mutex_unlock(&fwu_sysfs_mutex);
+	return retval;
 }
 
 static ssize_t fwu_sysfs_block_size_show(struct device *dev,
@@ -4449,14 +4621,17 @@ static ssize_t fwu_sysfs_write_guest_code_store(struct device *dev,
 	unsigned int input;
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
+	if (!mutex_trylock(&fwu_sysfs_mutex))
+		return -EBUSY;
+
 	if (sscanf(buf, "%u", &input) != 1) {
 		retval = -EINVAL;
-		goto exit;
+		goto guest_code_store_exit;
 	}
 
 	if (input != 1) {
 		retval = -EINVAL;
-		goto exit;
+		goto guest_code_store_exit;
 	}
 
 	if (fwu->in_ub_mode) {
@@ -4464,30 +4639,35 @@ static ssize_t fwu_sysfs_write_guest_code_store(struct device *dev,
 				"%s: In microbootloader mode\n",
 				__func__);
 		retval = -EINVAL;
-		goto exit;
+		goto guest_code_store_exit;
 	}
 
-	if (!fwu->ext_data_source)
-		return -EINVAL;
-	else
+	if (!fwu->ext_data_source) {
+		retval = -EINVAL;
+		goto guest_code_store_exit;
+	} else {
 		fwu->image = fwu->ext_data_source;
+	}
 
 	retval = fwu_start_write_guest_code();
 	if (retval < 0) {
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to write guest code\n",
 				__func__);
-		goto exit;
+		goto guest_code_store_free_exit;
 	}
 
 	retval = count;
 
-exit:
+guest_code_store_free_exit:
 	kfree(fwu->ext_data_source);
 	fwu->ext_data_source = NULL;
 	fwu->image = NULL;
+guest_code_store_exit:
+	mutex_unlock(&fwu_sysfs_mutex);
 	return retval;
 }
+#endif
 
 static void synaptics_rmi4_fwu_attn(struct synaptics_rmi4_data *rmi4_data,
 		unsigned char intr_mask)
@@ -4577,7 +4757,9 @@ int register_synaptics_fw_update(void)
 static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)
 {
 	int retval;
-	unsigned char attr_count;
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
+	int attr_count;
+#endif
 	struct pdt_properties pdt_props;
 
 	pr_info("%s\n", __func__);
@@ -4646,13 +4828,22 @@ static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)
 	fwu->do_lockdown = DO_LOCKDOWN;
 	fwu->initialized = true;
 
+#ifdef DO_STARTUP_FW_UPDATE
+	wake_lock_init(&fwu->fwu_wake_lock, WAKE_LOCK_SUSPEND, "fwu_wake_lock");
+	fwu->fwu_workqueue = create_singlethread_workqueue("fwu_workqueue");
+	INIT_WORK(&fwu->fwu_work, fwu_startup_fw_update_work);
+	queue_work(fwu->fwu_workqueue,
+			&fwu->fwu_work);
+#endif
+
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
 	retval = sysfs_create_bin_file(&rmi4_data->input_dev->dev.kobj,
 			&dev_attr_data);
 	if (retval < 0) {
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to create sysfs bin file\n",
 				__func__);
-		goto exit_free_mem;
+		goto exit_destroy_work;
 	}
 
 	for (attr_count = 0; attr_count < ARRAY_SIZE(attrs); attr_count++) {
@@ -4666,20 +4857,15 @@ static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)
 			goto exit_remove_attrs;
 		}
 	}
-
-#ifdef DO_STARTUP_FW_UPDATE
-	wake_lock_init(&fwu->fwu_wake_lock, WAKE_LOCK_SUSPEND, "fwu_wake_lock");
-	fwu->fwu_workqueue = create_singlethread_workqueue("fwu_workqueue");
-	INIT_WORK(&fwu->fwu_work, fwu_startup_fw_update_work);
-	queue_work(fwu->fwu_workqueue,
-			&fwu->fwu_work);
 #endif
+
 #ifdef CONFIG_TOUCHSCREEN_TOUCH_FW_UPDATE
 	register_synaptics_fw_update();
 #endif
 
 	return 0;
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
 exit_remove_attrs:
 	for (attr_count--; attr_count >= 0; attr_count--) {
 		sysfs_remove_file(&rmi4_data->input_dev->dev.kobj,
@@ -4687,6 +4873,15 @@ exit_remove_attrs:
 	}
 
 	sysfs_remove_bin_file(&rmi4_data->input_dev->dev.kobj, &dev_attr_data);
+
+exit_destroy_work:
+#endif
+#ifdef DO_STARTUP_FW_UPDATE
+	cancel_work_sync(&fwu->fwu_work);
+	flush_workqueue(fwu->fwu_workqueue);
+	destroy_workqueue(fwu->fwu_workqueue);
+	wake_lock_destroy(&fwu->fwu_wake_lock);
+#endif
 
 exit_free_mem:
 	kfree(fwu->image_name);
@@ -4701,7 +4896,9 @@ exit:
 
 static void synaptics_rmi4_fwu_remove(struct synaptics_rmi4_data *rmi4_data)
 {
-	unsigned char attr_count;
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
+	int attr_count;
+#endif
 
 	if (!fwu)
 		goto exit;
@@ -4717,12 +4914,14 @@ static void synaptics_rmi4_fwu_remove(struct synaptics_rmi4_data *rmi4_data)
 	wake_lock_destroy(&fwu->fwu_wake_lock);
 #endif
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_SYSFS_HTC
 	for (attr_count = 0; attr_count < ARRAY_SIZE(attrs); attr_count++) {
 		sysfs_remove_file(&rmi4_data->input_dev->dev.kobj,
 				&attrs[attr_count].attr);
 	}
 
 	sysfs_remove_bin_file(&rmi4_data->input_dev->dev.kobj, &dev_attr_data);
+#endif
 
 	kfree(fwu->read_config_buf);
 	kfree(fwu->image_name);
@@ -4798,6 +4997,20 @@ static void __exit rmi4_fw_update_module_exit(void)
 
 late_initcall(rmi4_fw_update_module_init);
 module_exit(rmi4_fw_update_module_exit);
+
+static int __init mfg_update_enable_flag(char *str)
+{
+	mfg_flag = 1;
+	pr_info("[TP] MFG_BUILD flag enable: %d from %s\n", mfg_flag, str);
+	return 0;
+} early_param("androidboot.mfg.tpupdate", mfg_update_enable_flag);
+
+static int __init disp_panel_info(char *str)
+{
+	strlcpy(panel_name, str, LCM_CMD_SIZE);
+	pr_info("%s: copy panel_name(%s) from mdss_mdp.panel(%s)\n", __func__, panel_name, str);
+	return 0;
+} early_param("mdss_mdp.panel", disp_panel_info);
 
 MODULE_AUTHOR("Synaptics, Inc.");
 MODULE_DESCRIPTION("Synaptics DSX FW Update Module");

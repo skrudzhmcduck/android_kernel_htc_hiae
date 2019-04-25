@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -86,6 +86,8 @@
 #define SLIMBUS_QMI_SVC_ID 0x0301
 #define SLIMBUS_QMI_SVC_V1 1
 #define SLIMBUS_QMI_INS_ID 0
+
+#define SLIM_QMI_RESP_TOUT 1000
 
 #define PGD_THIS_EE(r, v) ((v) ? PGD_THIS_EE_V2(r) : PGD_THIS_EE_V1(r))
 #define PGD_PORT(r, p, v) ((v) ? PGD_PORT_V2(r, p) : PGD_PORT_V1(r, p))
@@ -225,10 +227,11 @@ struct msm_slim_pdata {
 };
 
 struct msm_slim_bulk_wr {
-	phys_addr_t	phys;
+	dma_addr_t	wr_dma;
 	void		*base;
 	int		size;
-	int (*cb)(void *ctx, int err);
+	int		buf_sz;
+	int		(*cb)(void *ctx, int err);
 	void		*ctx;
 	bool		in_progress;
 };
@@ -263,6 +266,7 @@ struct msm_slim_ctrl {
 	struct clk		*rclk;
 	struct clk		*hclk;
 	struct mutex		tx_lock;
+	struct mutex		ssr_lock;
 	spinlock_t		tx_buf_lock;
 	u8			pgdla;
 	enum msm_slim_msgq	use_rx_msgqs;
@@ -345,13 +349,13 @@ enum {
 } while (0)
 
 #define SLIM_WARN(dev, x...) do { \
-	pr_warn(x); \
+	pr_warn_ratelimited(x); \
 	if (dev->ipc_slimbus_log && dev->ipc_log_mask >= WARN_LEV) \
 		ipc_log_string(dev->ipc_slimbus_log, x); \
 } while (0)
 
 #define SLIM_ERR(dev, x...) do { \
-	pr_err(x); \
+	pr_err_ratelimited(x); \
 	if (dev->ipc_slimbus_log && dev->ipc_log_mask >= ERR_LEV) { \
 		ipc_log_string(dev->ipc_slimbus_log, x); \
 		dev->default_ipc_log_mask = dev->ipc_log_mask; \

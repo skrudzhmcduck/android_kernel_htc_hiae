@@ -27,7 +27,7 @@
 #include <linux/input/synaptics_dsx_v2.h>
 #include "synaptics_dsx_core.h"
 
-#define STARTUP_FW_UPDATE_DELAY_MS 1000 /* ms */
+#define STARTUP_FW_UPDATE_DELAY_MS 1000 
 #define FORCE_UPDATE false
 #define DO_LOCKDOWN false
 
@@ -176,7 +176,7 @@ enum update_mode {
 };
 
 struct image_header {
-	/* 0x00 - 0x0f */
+	
 	unsigned char checksum[4];
 	unsigned char reserved_04;
 	unsigned char reserved_05;
@@ -186,19 +186,19 @@ struct image_header {
 	unsigned char bootloader_version;
 	unsigned char firmware_size[4];
 	unsigned char config_size[4];
-	/* 0x10 - 0x1f */
+	
 	unsigned char product_id[SYNAPTICS_RMI4_PRODUCT_ID_SIZE];
 	unsigned char package_id[2];
 	unsigned char package_id_revision[2];
 	unsigned char product_info[SYNAPTICS_RMI4_PRODUCT_INFO_SIZE];
-	/* 0x20 - 0x2f */
+	
 	unsigned char reserved_20_2f[16];
-	/* 0x30 - 0x3f */
+	
 	unsigned char ds_id[16];
-	/* 0x40 - 0x4f */
+	
 	unsigned char ds_info[10];
 	unsigned char reserved_4a_4f[6];
-	/* 0x50 - 0x53 */
+	
 	unsigned char firmware_id[4];
 };
 
@@ -638,19 +638,19 @@ static enum flash_area fwu_go_nogo(struct image_header_data *header)
 		goto exit;
 	}
 
-	/* Update both UI and config if device is in bootloader mode */
+	
 	if (fwu->in_flash_prog_mode) {
 		flash_area = UI_FIRMWARE;
 		goto exit;
 	}
 
-	/* Get device firmware ID */
+	
 	device_fw_id = rmi4_data->firmware_id;
 	dev_info(rmi4_data->pdev->dev.parent,
 			"%s: Device firmware ID = %d\n",
 			__func__, device_fw_id);
 
-	/* Get image firmware ID */
+	
 	if (header->contains_firmware_id) {
 		image_fw_id = header->firmware_id;
 	} else {
@@ -706,7 +706,7 @@ static enum flash_area fwu_go_nogo(struct image_header_data *header)
 		}
 	}
 
-	/* Get device config ID */
+	
 	retval = synaptics_rmi4_reg_read(rmi4_data,
 				fwu->f34_fd.ctrl_base_addr,
 				config_id,
@@ -726,7 +726,7 @@ static enum flash_area fwu_go_nogo(struct image_header_data *header)
 			config_id[2],
 			config_id[3]);
 
-	/* Get image config ID */
+	
 	dev_info(rmi4_data->pdev->dev.parent,
 			"%s: Image config ID = 0x%02x 0x%02x 0x%02x 0x%02x\n",
 			__func__,
@@ -740,34 +740,18 @@ static enum flash_area fwu_go_nogo(struct image_header_data *header)
 			dev_info(rmi4_data->pdev->dev.parent,
 				"%s: Image file has higher packrat id than device\n",
 				__func__);
-			/*
-			 * If packrat id of the firmware file is greater than
-			 * the firmware build id in the device(same as packrat
-			 * id), then both firmware and config area need to be
-			 * upgraded.
-			 */
 			flash_area = UI_FIRMWARE;
 			goto exit;
 		} else if (image_fw_id == device_fw_id) {
 			dev_info(rmi4_data->pdev->dev.parent,
 				"%s: Image file has equal packrat id as is in device\n",
 				__func__);
-			/*
-			 * If packrat id of the firmware file equals the
-			 * firmware build id in the device(same as packrat id),
-			 * then only config area needs to be upgraded.
-			 */
 			flash_area = CONFIG_AREA;
 			goto exit;
 		} else if (image_fw_id < device_fw_id) {
 			dev_info(rmi4_data->pdev->dev.parent,
 				"%s: Image file has lesser packrat id than device, even though config id is greater\n",
 				__func__);
-			/*
-			 * If packrat id of the firmware file is lesser than
-			 * the firmware build id in the device(same as packrat
-			 * id), then it is treated as an error
-			 */
 			flash_area = NONE;
 			goto exit;
 		}
@@ -776,38 +760,18 @@ static enum flash_area fwu_go_nogo(struct image_header_data *header)
 			dev_info(rmi4_data->pdev->dev.parent,
 				"%s: Image file has higher packrat id than device, though config id is equal\n",
 				__func__);
-			/*
-			 * If config id of the firmware file equals the config
-			 * id in the device, but packrat id of the firmware is
-			 * greater than the firmware build id in the device
-			 * (same as packrat id), then both firmware and config
-			 * area need to be upgraded.
-			 */
 			flash_area = UI_FIRMWARE;
 			goto exit;
 		} else if (image_fw_id == device_fw_id) {
 			dev_info(rmi4_data->pdev->dev.parent,
 				"%s: Image file has equal packrat id and config id as are in device\n",
 				__func__);
-			/*
-			 * If config id of the firmware file equals the config
-			 * id in the device and if packrat id of the firmware
-			 * is also equal to the firmware build id in the device
-			 * (same as packrat id), then no update is needed.
-			 */
 			flash_area = NONE;
 			goto exit;
 		} else if (image_fw_id < device_fw_id) {
 			dev_info(rmi4_data->pdev->dev.parent,
 				"%s: Image file has lesser packrat id than device, though config id is equal\n",
 				__func__);
-			/*
-			 * If config id of the firmware file equals the config
-			 * id in the device, but the packrat id of the firmware
-			 * file is lesser than the firmware build id in the
-			 * device(same as packrat id), then it is treated as an
-			 * error and no update is needed.
-			 */
 			flash_area = NONE;
 			goto exit;
 		}
@@ -1256,7 +1220,7 @@ static int fwu_start_write_config(void)
 
 	fwu->config_size = fwu->block_size * block_count;
 
-	/* Jump to the config area if given a packrat image */
+	
 	if ((fwu->config_area == UI_CONFIG_AREA) &&
 			(fwu->config_size != fwu->image_size)) {
 		parse_header(&header, fwu->ext_data_source);
@@ -1781,6 +1745,13 @@ static ssize_t fwu_sysfs_image_name_show(struct device *dev,
 static ssize_t fwu_sysfs_image_name_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
+	if (!buf || count > MAX_IMAGE_NAME_LEN) {
+		dev_err(fwu->rmi4_data->pdev->dev.parent,
+				"%s: Failed to copy image file name\n",
+				__func__);
+		return -EINVAL;
+	}
+
 	if (sscanf(buf, "%s", fwu->image_name) != 1)
 		return -EINVAL;
 
@@ -1856,7 +1827,7 @@ static ssize_t fwu_sysfs_config_id_show(struct device *dev,
 	unsigned char config_id[4];
 	int retval;
 
-	/* device config id */
+	
 	retval = synaptics_rmi4_reg_read(rmi4_data,
 				fwu->f34_fd.ctrl_base_addr,
 				config_id,
@@ -1879,7 +1850,7 @@ static ssize_t fwu_sysfs_package_id_show(struct device *dev,
 	unsigned char package_id[PACKAGE_ID_SIZE];
 	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
-	/* read device package id */
+	
 	retval = synaptics_rmi4_reg_read(rmi4_data,
 			rmi4_data->f01_query_base_addr + F01_PACKAGE_ID_OFFSET,
 			package_id,

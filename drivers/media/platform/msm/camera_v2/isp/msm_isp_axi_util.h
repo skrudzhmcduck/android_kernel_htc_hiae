@@ -14,7 +14,7 @@
 
 #include "msm_isp.h"
 
-int msm_isp_axi_create_stream(
+int msm_isp_axi_create_stream(struct vfe_device *vfe_dev,
 	struct msm_vfe_axi_shared_data *axi_data,
 	struct msm_vfe_axi_stream_request_cmd *stream_cfg_cmd);
 
@@ -50,6 +50,8 @@ int msm_isp_release_axi_stream(struct vfe_device *vfe_dev, void *arg);
 int msm_isp_update_axi_stream(struct vfe_device *vfe_dev, void *arg);
 void msm_isp_axi_cfg_update(struct vfe_device *vfe_dev,
 	enum msm_vfe_input_src frame_src);
+void msm_isp_axi_cfg_update_pending(struct vfe_device *vfe_dev,
+	enum msm_vfe_input_src frame_src);
 int msm_isp_axi_halt(struct vfe_device *vfe_dev,
 	struct msm_vfe_axi_halt_cmd *halt_cmd);
 int msm_isp_axi_reset(struct vfe_device *vfe_dev,
@@ -72,6 +74,7 @@ void msm_isp_process_axi_irq(struct vfe_device *vfe_dev,
 
 void msm_isp_axi_disable_all_wm(struct vfe_device *vfe_dev);
 
+void msm_isp_halt_send_error(struct vfe_device *vfe_dev, uint32_t event);
 int msm_isp_print_ping_pong_address(struct vfe_device *vfe_dev);
 void msm_isp_increment_frame_id(struct vfe_device *vfe_dev,
 	enum msm_vfe_input_src frame_src, struct msm_isp_timestamp *ts);

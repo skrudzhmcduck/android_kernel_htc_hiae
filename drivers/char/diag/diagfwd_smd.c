@@ -167,6 +167,7 @@ static void diag_state_open_smd(void *ctxt)
 		return;
 
 	smd_info = (struct diag_smd_info *)(ctxt);
+	DIAGFWD_DBUG("opening smd channel for peripheral %d type %d\n",smd_info->peripheral,smd_info->type);
 	atomic_set(&smd_info->diag_state, 1);
 	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 		 "%s setting diag state to 1", smd_info->name);
@@ -180,10 +181,11 @@ static void diag_state_close_smd(void *ctxt)
 		return;
 
 	smd_info = (struct diag_smd_info *)(ctxt);
+	DIAGFWD_DBUG("closing smd channel for peripheral %d type %d\n",smd_info->peripheral,smd_info->type);
 	atomic_set(&smd_info->diag_state, 0);
 	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 		 "%s setting diag state to 0", smd_info->name);
-	wake_up(&smd_info->read_wait_q);
+	wake_up_interruptible(&smd_info->read_wait_q);
 	flush_workqueue(smd_info->wq);
 }
 
@@ -385,7 +387,7 @@ static void smd_close_work_fn(struct work_struct *work)
 		return;
 
 	diagfwd_channel_close(smd_info->fwd_ctxt);
-	wake_up(&smd_info->read_wait_q);
+	wake_up_interruptible(&smd_info->read_wait_q);
 	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "%s exiting\n",
 		 smd_info->name);
 }
@@ -413,11 +415,20 @@ static void diag_smd_queue_read(void *ctxt)
 	smd_info = (struct diag_smd_info *)ctxt;
 	if (smd_info->inited && atomic_read(&smd_info->opened) &&
 	    smd_info->hdl) {
-		wake_up(&smd_info->read_wait_q);
+		wake_up_interruptible(&smd_info->read_wait_q);
 		queue_work(smd_info->wq, &(smd_info->read_work));
 	}
 }
+int diag_smd_check_state(void *ctxt)
+{
+	struct diag_smd_info *info = NULL;
 
+	if (!ctxt)
+		return 0;
+
+	info = (struct diag_smd_info *)ctxt;
+	return (int)(atomic_read(&info->diag_state));
+}
 void diag_smd_invalidate(void *ctxt, struct diagfwd_info *fwd_ctxt)
 {
 	struct diag_smd_info *smd_info = NULL;
@@ -702,8 +713,13 @@ static int diag_smd_read(void *ctxt, unsigned char *buf, int buf_len)
 	    !atomic_read(&smd_info->opened))
 		return -EIO;
 
-	wait_event(smd_info->read_wait_q, (smd_info->hdl != NULL) &&
+	err = wait_event_interruptible(smd_info->read_wait_q,
+				(smd_info->hdl != NULL) &&
 				(atomic_read(&smd_info->opened) == 1));
+	if (err) {
+		diagfwd_channel_read_done(smd_info->fwd_ctxt, buf, 0);
+		return -ERESTARTSYS;
+	}
 
 	if (atomic_read(&smd_info->diag_state) == 0) {
 		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
@@ -736,7 +752,7 @@ static int diag_smd_read(void *ctxt, unsigned char *buf, int buf_len)
 		while (total_recd_partial < pkt_len) {
 			read_len = smd_read_avail(smd_info->hdl);
 			if (!read_len) {
-				wait_event(smd_info->read_wait_q,
+				wait_event_interruptible(smd_info->read_wait_q,
 					   ((atomic_read(&smd_info->opened)) &&
 					    smd_read_avail(smd_info->hdl)));
 
@@ -806,6 +822,6 @@ static void smd_notify(void *ctxt, unsigned event)
 		break;
 	}
 
-	wake_up(&smd_info->read_wait_q);
+	wake_up_interruptible(&smd_info->read_wait_q);
 }
 

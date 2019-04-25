@@ -18,8 +18,8 @@
 
 #define CPU_FOOT_PRINT_MAGIC				0xACBDCC00
 #define CPU_FOOT_PRINT_MAGIC_FROM_IDLE			0xACBDCF00
-#define CPU_FOOT_PRINT_MAGIC_SPC			0xACBDAA00
-#define CPU_FOOT_PRINT_MAGIC_SPC_FROM_IDLE		0xACBDAF00
+#define CPU_FOOT_PRINT_MAGIC_WFI_RET			0xACBDAA00
+#define CPU_FOOT_PRINT_MAGIC_WFI_RET_FROM_IDLE		0xACBDAF00
 #define CPU_FOOT_PRINT_MAGIC_HOTPLUG			0xACBDBB00
 #define RESET_VECTOR_CLEAN_MAGIC			0xDCBAABCD
 #define MAGIC_NUM_FOR_BATT_SAVE		0xFEDCBA00 
@@ -76,7 +76,9 @@ void set_acpuclk_cpu_freq_footprint(enum FREQ_TYPE type, unsigned cpu, unsigned 
 void set_acpuclk_cpu_freq_footprint_by_clk(enum FREQ_TYPE type, struct clk *c, unsigned khz);
 void set_acpuclk_l2_freq_footprint(enum FREQ_TYPE type, unsigned khz);
 void set_acpuclk_l2_freq_footprint_by_clk(enum FREQ_TYPE type, struct clk *c, unsigned khz);
+void inc_kernel_exit_counter_from_pc(unsigned cpu);
 void init_cpu_foot_print(unsigned cpu, bool from_idle, bool notify_rpm);
+void init_cpu_hotplug_foot_print(unsigned cpu);
 void set_cpu_foot_print(unsigned cpu, unsigned state);
 void clean_reset_vector_debug_info(unsigned cpu);
 void set_reset_vector(unsigned cpu);

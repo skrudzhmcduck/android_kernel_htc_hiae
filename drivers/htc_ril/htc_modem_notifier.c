@@ -65,7 +65,7 @@ static int notify_modem_app_reboot_call(struct notifier_block *this,
 	switch (code) {
 		case SYS_RESTART:
 		case SYS_POWER_OFF:
-			
+			//We only pass reason "oem-9x" to modem after modem power up
 			if(modem_is_load && _cmd && (strlen(_cmd)==6) && !strncmp(_cmd, "oem-9", 5) ) {
 				pr_info("[modem_notifier]%s: send reboot reason to modem.\n", __func__);
 				oem_code = simple_strtoul(_cmd + 4, 0, 16) & 0xff;
@@ -94,12 +94,12 @@ static int modem_notifier_cb(struct notifier_block *this,
             case SUBSYS_AFTER_SHUTDOWN:
                 modem_is_load = 0;
                 break;
-	    case SUBSYS_SOC_RESET:  
+	    case SUBSYS_SOC_RESET:  //for offline ramdump
 	        pr_info("[modem_notifier]%s: notify modem to do cache flush [Before]\n", __func__);
 	        if (!check_modem_smsm_stat(SMSM_RESET)){
-	            
+	            //Set APPS SMSM state to APPS_REBOOT let modem can do flush cache.
 	            pr_info("[modem_notifier]%s: notify modem to do cache flush [Start]\n", __func__);
-	            
+	            //Send oem-98 let modem do crash process.
 	            set_oem_reboot_reason(0x98);
 	            smsm_change_state(SMSM_APPS_STATE, 0, SMSM_APPS_REBOOT);
 	            check_modem_smsm_stat_timeout(100, SMSM_RESET);

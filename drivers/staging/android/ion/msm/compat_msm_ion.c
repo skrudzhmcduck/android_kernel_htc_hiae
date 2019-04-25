@@ -64,8 +64,8 @@ static int compat_get_ion_flush_data(
 	err |= get_user(i, &data32->fd);
 	err |= put_user(i, &data->fd);
 	err |= get_user(u, &data32->vaddr);
-	
-	data->vaddr = NULL;
+	/* upper bits won't get set, zero them */
+	err |= put_user(NULL, &data->vaddr);
 	err |= put_user(u, (compat_uptr_t *)&data->vaddr);
 	err |= get_user(l, &data32->offset);
 	err |= put_user(l, &data->offset);

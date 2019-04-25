@@ -120,8 +120,6 @@
 #define clk_gcc_camss_vfe1_axi_clk		0xaf7463b3
 #define clk_gcc_camss_vfe1_clk			0xcaf20d99
 #define clk_gcc_dcc_clk				0xd1000c50
-#define clk_gcc_dsa_core_clk			0xa7bc3134
-#define clk_gcc_dsa_noc_cfg_ahb_clk		0x9ba991b0
 #define clk_gcc_oxili_gmem_clk			0x5620913a
 #define clk_gcc_gp1_clk				0x057f7b69
 #define clk_gcc_gp2_clk				0x9bf83ffd
@@ -155,9 +153,6 @@
 #define clk_gcc_sdcc2_apps_clk			0x861b20ac
 #define clk_gcc_sdcc3_ahb_clk			0x565b2c03
 #define clk_gcc_sdcc3_apps_clk			0x0b27aeac
-#define clk_gcc_throttle_gfx_1_ahb_clk		0x816e2808
-#define clk_gcc_throttle_gfx_1_axi_clk		0xde9e65b7
-#define clk_gcc_throttle_gfx_1_cxo_clk		0x3f1cc76e
 #define clk_gcc_usb2a_phy_sleep_clk		0x6caa736f
 #define clk_gcc_usb_hs_phy_cfg_ahb_clk		0xe13808fd
 #define clk_gcc_usb_fs_ahb_clk			0x69283a8e
@@ -235,12 +230,13 @@
 #define clk_vfe0_clk_src			0xa0c2bd8f
 #define clk_vfe1_clk_src			0x4e357366
 #define clk_crypto_clk_src			0x37a21414
-#define clk_dsa_core_clk_src			0x26f8bb96
 #define clk_gp1_clk_src				0xad85b97a
 #define clk_gp2_clk_src				0xfb1f0065
 #define clk_gp3_clk_src				0x63b693d6
 #define clk_byte0_clk_src			0x75cc885b
+#define clk_ext_byte0_clk_src			0xfb32f31e
 #define clk_byte1_clk_src			0x63c2c955
+#define clk_ext_byte1_clk_src			0x585ef6d4
 #define clk_esc0_clk_src			0xb41d7c38
 #define clk_esc1_clk_src			0x3b0afa42
 #define clk_dsi_pll0_byte_clk_src		0x44539836
@@ -249,7 +245,9 @@
 #define clk_dsi_pll1_pixel_clk_src		0xce233fcf
 #define clk_mdp_clk_src				0x6dc1f8f1
 #define clk_pclk0_clk_src			0xccac1f35
+#define clk_ext_pclk0_clk_src			0x087c1612
 #define clk_pclk1_clk_src			0x090f68ac
+#define clk_ext_pclk1_clk_src			0x8067c5a3
 #define clk_vsync_clk_src			0xecb43940
 #define clk_gfx3d_clk_src			0x917f76ef
 #define clk_pdm2_clk_src			0x31e494fd

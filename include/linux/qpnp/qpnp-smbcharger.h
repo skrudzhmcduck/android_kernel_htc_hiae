@@ -125,8 +125,30 @@ int pmi8952_set_otg_pulse_skip(int val);
 int pmi8952_get_otg_pulse_skip(void);
 int pmi8952_is_chg_safety_timer_timeout(int *result);
 int pmi8952_get_vbus(int *result);
+int pmi8952_get_usb_type(int *result);
 int pmi8952_get_max_iusb(int *result);
 int pmi8952_get_AICL(int *result);
+int pmi8952_set_system_temp_level(int val);
+int pmi8952_get_system_temp_level(void);
+int pmi8952_get_input_current_max(void);
+int pmi8952_set_dp_dm(int val);
+int pmi8952_get_dp_dm(void);
+int pmi8952_get_input_current_limited(void);
+int pmi8952_set_rerun_aicl(int val);
+int pmi8952_get_rerun_aicl(void);
+int pmi8952_is_bad_cable_used(int *result);
+int pmi8952_is_quick_charger_used(bool *result);
+#ifdef CONFIG_HTC_BATT_WA_PCN0018
+int pmi8952_set_charger_after_eoc(bool enable);
+#endif
+#ifdef CONFIG_HTC_CHARGER
+int pmi8952_set_htcchg_ext_property(struct power_supply *psy,
+				       enum power_supply_property prop,
+				       const union power_supply_propval *val);
+
+int pmi8952_get_htcchg_ext_property(const enum power_supply_property prop);
+#endif 
+
 #endif
 #else 
 #ifdef CONFIG_HTC_BATT_8960
@@ -424,6 +446,11 @@ static inline int pmi8952_get_vbus(int *result)
 	return -ENXIO;
 }
 
+static inline int pmi8952_get_usb_type(int *result)
+{
+	return -ENXIO;
+}
+
 static inline int pmi8952_get_max_iusb(int *result)
 {
 	return -ENXIO;
@@ -433,6 +460,76 @@ static inline int pmi8952_get_AICL(int *result)
 {
 	return -ENXIO;
 }
+
+static inline int pmi8952_set_system_temp_level(int val)
+{
+	return -ENXIO;
+}
+
+static inline int pmi8952_get_system_temp_level(void)
+{
+	return -ENXIO;
+}
+
+static inline int pmi8952_get_input_current_max(void)
+{
+	return -ENXIO;
+}
+
+static inline int pmi8952_set_dp_dm(int val)
+{
+	return -ENXIO;
+}
+
+static inline int pmi8952_get_dp_dm(void)
+{
+	return -ENXIO;
+}
+
+static inline int pmi8952_get_input_current_limited(void)
+{
+	return -ENXIO;
+}
+
+static inline int pmi8952_set_rerun_aicl(int val)
+{
+	return -ENXIO;
+}
+
+static inline int pmi8952_get_rerun_aicl(void)
+{
+	return -ENXIO;
+}
+
+static inline int pmi8952_is_bad_cable_used(int *result)
+{
+	return -ENXIO;
+}
+
+static inline int pmi8952_is_quick_charger_used(bool *result)
+{
+	return -ENXIO;
+}
+#ifdef CONFIG_HTC_BATT_WA_PCN0018
+static inline int pmi8952_set_charger_after_eoc(bool enable)
+{
+	return -ENXIO;
+}
+#endif
+#ifdef CONFIG_HTC_CHARGER
+static inline int pmi8952_set_htcchg_ext_property(struct power_supply *psy,
+				       enum power_supply_property prop,
+				       const union power_supply_propval *val)
+{
+	return -ENXIO;
+}
+
+static inline int pmi8952_get_htcchg_ext_property(const enum power_supply_property prop)
+{
+	return -ENXIO;
+}
+#endif 
+
 #endif 
 #endif 
 #endif 

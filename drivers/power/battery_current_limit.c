@@ -212,6 +212,7 @@ static void bcl_handle_hotplug(struct work_struct *work)
 			cpumask_set_cpu(cpu, &curr_req.offline_mask);
 	}
 	trace_bcl_sw_mitigation("Start hotplug CPU", bcl_hotplug_request);
+	pr_info("Start to request hotplug: 0x%x\n", bcl_hotplug_request);
 	ret = devmgr_client_request_mitigation(
 		gbcl->hotplug_handle,
 		HOTPLUG_MITIGATION_REQ,
@@ -238,7 +239,7 @@ static void update_cpu_freq(void)
 
 	if (bcl_vph_state == BCL_LOW_THRESHOLD
 		|| bcl_ibat_state == BCL_HIGH_THRESHOLD
-		|| battery_soc_val <= soc_low_threshold) {
+		|| battery_soc_val < soc_low_threshold) {
 		cpufreq_req.freq.max_freq = (gbcl->bcl_monitor_type
 			== BCL_IBAT_MONITOR_TYPE) ? gbcl->btm_freq_max
 			: gbcl->bcl_p_freq_max;
@@ -282,7 +283,7 @@ static void power_supply_callback(struct power_supply *psy)
 		pr_debug("Battery SOC reported:%d", battery_soc_val);
 		trace_bcl_sw_mitigation("SoC reported", battery_soc_val);
 		prev_soc_state = bcl_soc_state;
-		bcl_soc_state = (battery_soc_val <= soc_low_threshold) ?
+		bcl_soc_state = (battery_soc_val < soc_low_threshold) ?
 					BCL_LOW_THRESHOLD : BCL_HIGH_THRESHOLD;
 		if (bcl_soc_state == prev_soc_state)
 			return;
@@ -819,6 +820,7 @@ show_bcl(ibat_state, bcl_ibat_state, "%d\n")
 show_bcl(hotplug_mask, bcl_hotplug_mask, "%d\n")
 show_bcl(hotplug_soc_mask, bcl_soc_hotplug_mask, "%d\n")
 show_bcl(hotplug_status, bcl_hotplug_request, "%d\n")
+show_bcl(soc_low_thresh, soc_low_threshold, "%d\n")
 
 static ssize_t
 mode_show(struct device *dev, struct device_attribute *attr, char *buf)
@@ -1173,6 +1175,23 @@ static ssize_t hotplug_soc_mask_store(struct device *dev,
 
 	return count;
 }
+
+static ssize_t soc_low_thresh_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	int val = 0;
+	int ret = 0;
+
+	ret = convert_to_int(buf, &val);
+	if (ret)
+		return ret;
+
+	soc_low_threshold = val;
+	pr_info("bcl soc low threshold updated to %d\n", soc_low_threshold);
+
+	return count;
+}
+
 static struct device_attribute bcl_dev_attr[] = {
 	__ATTR(type, 0444, type_show, NULL),
 	__ATTR(iavail, 0444, iavail_show, NULL),
@@ -1212,6 +1231,7 @@ static struct device_attribute btm_dev_attr[] = {
 	__ATTR(hotplug_mask, 0644, hotplug_mask_show, hotplug_mask_store),
 	__ATTR(hotplug_soc_mask, 0644, hotplug_soc_mask_show,
 		hotplug_soc_mask_store),
+	__ATTR(soc_low_thresh, 0644, soc_low_thresh_show, soc_low_thresh_store),
 };
 
 static int create_bcl_sysfs(struct bcl_context *bcl)
@@ -1666,7 +1686,7 @@ static int bcl_probe(struct platform_device *pdev)
 		return ret;
 	}
 	bcl_psy.name = bcl_psy_name;
-	bcl_psy.type = POWER_SUPPLY_TYPE_BMS;
+	bcl_psy.type = POWER_SUPPLY_TYPE_BATTERY;
 	bcl_psy.get_property     = bcl_battery_get_property;
 	bcl_psy.set_property     = bcl_battery_set_property;
 	bcl_psy.num_properties = 0;

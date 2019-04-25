@@ -48,16 +48,18 @@
 #include <asm/ptrace.h>
 #include <asm/irq_regs.h>
 
+atomic_t em_remount = ATOMIC_INIT(0);
 static int __read_mostly sysrq_enabled = SYSRQ_DEFAULT_ENABLE;
 static bool __read_mostly sysrq_always_enabled;
 
 unsigned short platform_sysrq_reset_seq[] __weak = { KEY_RESERVED };
 int sysrq_reset_downtime_ms __weak;
 
-static bool sysrq_on(void)
+bool sysrq_on(void)
 {
 	return sysrq_enabled || sysrq_always_enabled;
 }
+EXPORT_SYMBOL(sysrq_on);
 
 static bool sysrq_on_mask(int mask)
 {
@@ -177,6 +179,7 @@ static struct sysrq_key_op sysrq_show_timers_op = {
 
 static void sysrq_handle_mountro(int key)
 {
+	atomic_set(&em_remount, 1);
 	emergency_remount();
 }
 static struct sysrq_key_op sysrq_mountro_op = {

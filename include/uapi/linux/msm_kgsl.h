@@ -230,6 +230,7 @@ enum kgsl_timestamp_type {
 #define KGSL_PROP_SP_GENERIC_MEM	0x14
 #define KGSL_PROP_UCODE_VERSION		0x15
 #define KGSL_PROP_GPMU_VERSION		0x16
+#define KGSL_PROP_DEVICE_BITNESS	0x18
 
 struct kgsl_shadowprop {
 	unsigned long gpuaddr;
@@ -712,7 +713,7 @@ struct kgsl_gpumem_sync_cache_bulk {
 #ifdef CONFIG_MSM_KGSL
 unsigned int kgsl_get_alloc_size(int detailed);
 #else
-static inline unsigned int kgsl_get_alloc_size(int detailed)
+static inline unsigned int kgsl_get_alloc_size(__attribute__((unused))int detailed)
 {
 	return 0;
 }

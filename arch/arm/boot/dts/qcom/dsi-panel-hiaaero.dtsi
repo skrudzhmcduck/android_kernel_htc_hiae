@@ -1,4 +1,8 @@
 &mdss_dsi0 {
+	htc,vci-post-on-sleep = <1>;
+
+	htc,rst-post-off-sleep = <10>;
+
 	vdd-supply = <&pm8950_l17>;
 	qcom,panel-supply-entries {
 		#address-cells = <1>;
@@ -41,7 +45,7 @@
 		qcom,mdss-dsi-v-bottom-border = <0>;
 		qcom,mdss-dsi-bpp = <24>;
 		qcom,mdss-dsi-color-order = "rgb_swap_rgb";
-		qcom,mdss-dsi-underflow-color = <0>;
+		qcom,mdss-dsi-underflow-color = <0xFF>;
 		qcom,mdss-dsi-border-color = <0>;
 		qcom,mdss-dsi-te-pin-select = <1>;
 		qcom,mdss-dsi-te-dcs-command = <1>;
@@ -88,11 +92,10 @@
 		qcom,mdss-dsi-default-command-state = "dsi_hs_mode";
 		qcom,mdss-pan-physical-width-dimension = <62>;
 		qcom,mdss-pan-physical-height-dimension = <110>;
-		qcom,mdss-shrink-pwm = <7 87 255>;
+		htc,mdss-shrink-pwm = <7 87 255>;
 		qcom,mdss-dsi-lp11-init;
 		htc,mdss-camera-blk = <181>;
 		htc,blk_pending_display_on;
-		htc,panel-id=<1>;
 		htc,disable-backlight-when-flashlight;
 	};
 };

@@ -121,13 +121,49 @@ int htc_usb_enable_function(char *name, int ebl)
 
 }
 
+bool nonCableNotify_flag = false;
+int htc_usb_nonCable_notification(int ebl)
+{
+	struct android_dev *dev = _android_dev;
+	struct usb_composite_dev *cdev = dev->cdev;
+	char state_buf[60];
+	char name_buf[60];
+	char *function[3];
+
+	snprintf(name_buf, sizeof(name_buf), "SWITCH_NAME=%s", "usb_nonstandard_cable");
+	function[1] = name_buf;
+	function[2] = NULL;
+
+	if ( ebl == 1 && !nonCableNotify_flag ) {
+		snprintf(state_buf, sizeof(state_buf), "SWITCH_STATE=%s", "1");
+		function[0] = state_buf;
+		kobject_uevent_env(&cdev->usb_nonstandard_cable.dev->kobj, KOBJ_CHANGE, function);
+		nonCableNotify_flag = true;
+		USB_INFO("[%s] Send uevent to notify framework that non-standard cable is %s\n", __func__, ebl==1 ? "plugged":"unplugged");
+		return 0;
+	} else if ( ebl == 0 && nonCableNotify_flag ) {
+		snprintf(state_buf, sizeof(state_buf), "SWITCH_STATE=%s", "0");
+		function[0] = state_buf;
+		kobject_uevent_env(&cdev->usb_nonstandard_cable.dev->kobj, KOBJ_CHANGE, function);
+		nonCableNotify_flag = false;
+		USB_INFO("[%s] Send uevent to notify framework that non-standard cable is %s\n", __func__, ebl==1 ? "plugged":"unplugged");
+		return 0;
+	} else {
+		USB_INFO("[%s] Skip sending uevent, ebl:%d, nonCableNotify_flag:%d\n", __func__, ebl, nonCableNotify_flag);
+		return -1;
+	}
+}
+
 static int usb_disable;
 
 const char * change_charging_to_ums(const char *buff) {
+	USB_INFO("switch ums function from %s\n", buff);
 	if (!strcmp(buff, "charging"))
 		return "mass_storage";
 	else if (!strcmp(buff, "adb"))
 		return "mass_storage,adb";
+	else if (!strcmp(buff, "ffs"))
+		return "mass_storage,ffs";
 	return buff;
 }
 void change_charging_pid_to_ums(struct usb_composite_dev *cdev) {
@@ -147,10 +183,9 @@ void change_charging_pid_to_ums(struct usb_composite_dev *cdev) {
 }
 
 const char * add_usb_radio_debug_function(const char *buff) {
+	USB_INFO("switch to radio debug function from %s\n", buff);
 	if (!strcmp(buff, "ffs,acm")) 
 		return "adb,diag,modem,acm";
-	else if (!strcmp(buff, "mtp,adb")) 
-		return "adb,diag,modem,rmnet";
 	else if (!strcmp(buff, "mass_storage,adb")) 
 		return "mass_storage,adb,diag,modem,rmnet";
 	else if (!strcmp(buff, "mass_storage,adb,acm")) 
@@ -163,44 +198,47 @@ const char * add_usb_radio_debug_function(const char *buff) {
 		return "rndis,diag,modem";
 	else if (!strcmp(buff, "rndis,adb"))
 		return "rndis,adb,diag,modem";
-	USB_INFO("switch to radio debug function:%s\n", buff);
+	else if (!strcmp(buff, "mtp")) 
+		return "mtp,diag,modem,rmnet";
+	else if (!strcmp(buff, "mtp,adb")) 
+		return "mtp,adb,diag,modem,rmnet";
 	return buff;
 }
 void check_usb_vid_pid(struct usb_composite_dev *cdev) {
 	switch(cdev->desc.idProduct) {
+		case 0x0c93:
+			cdev->desc.idProduct = 0x0f12;
+			break;
+		case 0x0f87:
+		case 0x0ca8:
+			cdev->desc.idProduct = 0x0f11;
+			break;
 		case 0x0ffe:
-			cdev->desc.idVendor = 0x0bb4;
 			cdev->desc.idProduct = 0x0f82;
 			break;
 		case 0x0ffc:
-			cdev->desc.idVendor = 0x0bb4;
 			cdev->desc.idProduct = 0x0f83;
-			break;
-		case 0x0f87:
-			cdev->desc.idVendor = 0x0bb4;
-			cdev->desc.idProduct = 0x0f24;
 			break;
 		case 0x0f86:
 		case 0x0ff5:
-			cdev->desc.idVendor = 0x0bb4;
 			cdev->desc.idProduct = 0x0fd8;
 			break;
 		case 0x0f65:
 		case 0x0ff9:
-			cdev->desc.idVendor = 0x0bb4;
 			cdev->desc.idProduct = 0x0fd9;
 			break;
 		case 0x0f15:
-			cdev->desc.idVendor = 0x0bb4;
 			cdev->desc.idProduct = 0x0f17;
 		default:
 			break;
 	}
+	cdev->desc.idVendor = 0x0bb4;
 	return;
 }
 
 static void setup_usb_denied(int htc_mode)
 {
+	USB_INFO("%s: htc_mode = %d\n", __func__, htc_mode);
 	if (htc_mode)
 		_android_dev->autobot_mode = 1;
 	else
@@ -230,8 +268,7 @@ static ssize_t show_is_usb_denied(struct device *dev,
 		deny = 1;
 	}
 
-	length = sprintf(buf, "%d\n", deny);
-	USB_INFO("%s: %s\n", __func__, buf);
+	length = snprintf(buf, PAGE_SIZE, "%d\n", deny);
 	return length;
 }
 
@@ -325,7 +362,7 @@ static ssize_t show_ats(struct device *dev,
 {
 	unsigned length;
 
-	length = sprintf(buf, "%d\n", (get_debug_flag() & 0x100) || usb_ats);
+	length = sprintf(buf, "%d\n", (get_debug_flag() & 0x300) || usb_ats);
 	USB_INFO("%s: %s\n", __func__, buf);
 	return length;
 }
@@ -397,6 +434,17 @@ static ssize_t store_usb_modem_enable_setting(struct device *dev,
 	return count;
 }
 
+#ifdef CONFIG_USB_FAIRCHILD_FUSB302
+extern ssize_t dump_all_register(char *buf);
+static ssize_t show_typec_dump_reg(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	USB_INFO("%s : dump ANX7418 register\n", __func__);
+	return dump_all_register(buf);
+}
+#endif
+
+
 static DEVICE_ATTR(usb_ac_cable_status, 0444, show_usb_ac_cable_status, NULL);
 
 static DEVICE_ATTR(dummy_usb_serial_number, 0644, iSerial_show, store_dummy_usb_serial_number);
@@ -406,6 +454,9 @@ static DEVICE_ATTR(usb_disable, 0664,show_usb_disable_setting, store_usb_disable
 static DEVICE_ATTR(usb_denied, 0444, show_is_usb_denied, NULL);
 static DEVICE_ATTR(usb_cable_connect, 0664, show_usb_cable_connect, store_usb_cable_connect);
 static DEVICE_ATTR(usb_modem_enable, 0660,NULL, store_usb_modem_enable_setting);
+#ifdef CONFIG_USB_FAIRCHILD_FUSB302
+static DEVICE_ATTR(typec_dump_reg, 0440, show_typec_dump_reg, NULL); 
+#endif
 
 static __maybe_unused struct attribute *android_htc_usb_attributes[] = {
 	&dev_attr_dummy_usb_serial_number.attr,
@@ -416,6 +467,9 @@ static __maybe_unused struct attribute *android_htc_usb_attributes[] = {
 	&dev_attr_usb_denied.attr,
 	&dev_attr_usb_cable_connect.attr,
 	&dev_attr_usb_modem_enable.attr,
+#ifdef CONFIG_USB_FAIRCHILD_FUSB302
+	&dev_attr_typec_dump_reg.attr, 
+#endif
 	NULL
 };
 

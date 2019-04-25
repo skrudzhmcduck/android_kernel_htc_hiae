@@ -44,6 +44,8 @@
 #include <sound/compress_offload.h>
 #include <sound/compress_driver.h>
 
+#define U32_MAX ((u32)~0U)
+
 
 static DEFINE_MUTEX(device_mutex);
 
@@ -462,7 +464,7 @@ static int snd_compress_check_input(struct snd_compr_params *params)
 {
 	
 	if (params->buffer.fragment_size == 0 ||
-			params->buffer.fragments > SIZE_MAX / params->buffer.fragment_size)
+		params->buffer.fragments > U32_MAX / params->buffer.fragment_size)
 		return -EINVAL;
 
 	
@@ -911,7 +913,7 @@ static int snd_compress_dev_register(struct snd_device *device)
 		return -EBADFD;
 	compr = device->device_data;
 
-	sprintf(str, "comprC%iD%i", compr->card->number, compr->device);
+	snprintf(str, sizeof(str)-1, "comprC%iD%i", compr->card->number, compr->device); 
 	pr_debug("reg %s for device %s, direction %d\n", str, compr->name,
 			compr->direction);
 	

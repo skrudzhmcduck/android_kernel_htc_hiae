@@ -132,10 +132,16 @@ static enum power_supply_property htc_battery_properties[] = {
 	POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_CAPACITY,
 	POWER_SUPPLY_PROP_OVERLOAD,
+	POWER_SUPPLY_PROP_CURRENT_NOW,
 #if 0
 	POWER_SUPPLY_PROP_USB_OVERHEAT,
 #endif
+	POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL,
+	POWER_SUPPLY_PROP_INPUT_CURRENT_MAX,
 	POWER_SUPPLY_PROP_FLASH_ACTIVE,
+	POWER_SUPPLY_PROP_DP_DM,
+	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMITED,
+	POWER_SUPPLY_PROP_RERUN_AICL,
 };
 
 static enum power_supply_property htc_power_properties[] = {
@@ -150,10 +156,17 @@ static char *supply_list[] = {
 	"battery",
 };
 
+static char *supplied_to_list[] = {
+	"bcl",
+	"fg_adc",
+};
+
 static struct power_supply htc_power_supplies[] = {
 	{
 		.name = "battery",
 		.type = POWER_SUPPLY_TYPE_BATTERY,
+		.supplied_to = supplied_to_list,
+		.num_supplicants = ARRAY_SIZE(supplied_to_list),
 		.properties = htc_battery_properties,
 		.num_properties = ARRAY_SIZE(htc_battery_properties),
 		.get_property = htc_battery_get_property,
@@ -303,6 +316,63 @@ static ssize_t htc_battery_show_htc_extension_attr(struct device *dev,
 		return battery_core_info.func.func_show_htc_extension_attr(attr, buf);
 	return 0;
 }
+
+static ssize_t htc_charger_type_attr(struct device *dev,
+                 struct device_attribute *attr,
+                char *buf)
+{
+	return battery_core_info.func.func_show_charger_type_attr(attr, buf);
+}
+
+static ssize_t htc_thermal_batt_temp_attr(struct device *dev,
+		struct device_attribute *attr,
+		char *buf)
+{
+	return battery_core_info.func.func_show_thermal_batt_temp_attr(attr, buf);
+}
+
+static ssize_t htc_batt_bidata_attr(struct device *dev,
+		struct device_attribute *attr,
+		char *buf)
+{
+	return battery_core_info.func.func_show_batt_bidata_attr(attr, buf);
+}
+
+static ssize_t htc_consist_data_attr(struct device *dev,
+                struct device_attribute *attr,
+                char *buf)
+{
+        return battery_core_info.func.func_show_consist_data_attr(attr, buf);
+}
+
+static ssize_t htc_cycle_data_attr(struct device *dev,
+                struct device_attribute *attr,
+                char *buf)
+{
+        return battery_core_info.func.func_show_cycle_data_attr(attr, buf);
+}
+
+static ssize_t htc_batt_check(struct device *dev,
+		struct device_attribute *attr,
+		char *buf)
+{
+	return battery_core_info.func.func_show_batt_chked_attr(attr, buf);
+}
+
+static ssize_t htc_clr_cycle(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+        if (!battery_core_info.func.func_batt_asp_set_attr) {
+                BATT_ERR("No set full level function!");
+                return -ENOENT;
+        }
+
+        battery_core_info.func.func_batt_asp_set_attr(count);
+
+        return count;
+}
+
 
 static ssize_t htc_battery_set_delta(struct device *dev,
 				struct device_attribute *attr,
@@ -816,9 +886,16 @@ static struct device_attribute htc_battery_attrs[] = {
 	__ATTR(batt_attr_text, S_IRUGO, htc_battery_show_batt_attr, NULL),
 	__ATTR(batt_power_meter, S_IRUGO, htc_battery_show_cc_attr, NULL),
 	__ATTR(htc_extension, S_IRUGO, htc_battery_show_htc_extension_attr, NULL),
+        __ATTR(charger_type, S_IRUGO, htc_charger_type_attr, NULL),
+        __ATTR(thermal_batt_temp, S_IRUGO, htc_thermal_batt_temp_attr, NULL),
+	__ATTR(htc_batt_data, S_IRUGO, htc_batt_bidata_attr, NULL),
+	__ATTR(consist_data, S_IRUGO, htc_consist_data_attr, NULL),
+	__ATTR(cycle_data, S_IRUGO, htc_cycle_data_attr, NULL),
+	__ATTR(batt_chked, S_IRUGO, htc_batt_check, NULL),
 };
 
 static struct device_attribute htc_set_delta_attrs[] = {
+	__ATTR(batt_asp_set, S_IWUSR | S_IWGRP, NULL, htc_clr_cycle),
 	__ATTR(delta, S_IWUSR | S_IWGRP, NULL, htc_battery_set_delta),
 	__ATTR(full_level, S_IWUSR | S_IWGRP, NULL,
 		htc_battery_set_full_level),
@@ -927,7 +1004,10 @@ static int htc_battery_set_property(struct power_supply *psy,
 		return ret;
 #endif
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED:
+	case POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL:
 	case POWER_SUPPLY_PROP_FLASH_ACTIVE:
+	case POWER_SUPPLY_PROP_DP_DM:
+	case POWER_SUPPLY_PROP_RERUN_AICL:
 		if (battery_core_info.func.func_set_chg_property)
 			ret = battery_core_info.func.func_set_chg_property(psp, val->intval);
 		else {
@@ -935,6 +1015,18 @@ static int htc_battery_set_property(struct power_supply *psy,
 			return ret;
 		}
 		break;
+#ifdef CONFIG_HTC_CHARGER
+	case POWER_SUPPLY_PROP_HTCCHG_EXT:
+	case POWER_SUPPLY_PROP_HTCCHG_ICL:
+	case POWER_SUPPLY_PROP_HTCCHG_FCC:
+		if (battery_core_info.func.func_set_smbchg_property)
+			ret = battery_core_info.func.func_set_smbchg_property(psy, psp, val);
+		else {
+			pr_info("%s: function doesn't exist! psp=%d\n", __func__, psp);
+			return ret;
+		}
+		break;
+#endif 
 	default:
 		pr_info("%s: invalid type, psp=%d\n", __func__, psp);
 		return -EINVAL;
@@ -979,13 +1071,21 @@ static int htc_battery_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_FLASH_CURRENT_MAX :
 	case POWER_SUPPLY_PROP_CHARGE_TYPE:
+	case POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL:
+	case POWER_SUPPLY_PROP_INPUT_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_FLASH_ACTIVE:
+	case POWER_SUPPLY_PROP_DP_DM:
+	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMITED:
+	case POWER_SUPPLY_PROP_RERUN_AICL:
 		if (battery_core_info.func.func_get_chg_status) {
 			val->intval = battery_core_info.func.func_get_chg_status(psp);
 			if (val->intval == (-EINVAL))
 				pr_info("%s: function not ready. psp=%d\n", __func__, psp);
 		} else
 			pr_info("%s: function doesn't exist! psp=%d\n", __func__, psp);
+		break;
+	case POWER_SUPPLY_PROP_CURRENT_NOW:
+		val->intval = battery_core_info.rep.batt_current;
 		break;
 #if 0
 	case POWER_SUPPLY_PROP_USB_OVERHEAT:
@@ -1112,6 +1212,9 @@ static int htc_battery_property_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED:
 	case POWER_SUPPLY_PROP_VOLTAGE_MIN:
+	case POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL:
+	case POWER_SUPPLY_PROP_DP_DM:
+	case POWER_SUPPLY_PROP_RERUN_AICL:
 		return 1;
 	default:
 		break;
@@ -1401,7 +1504,8 @@ int htc_battery_core_update_changed(void)
 		(battery_core_info.rep.batt_vol != new_batt_info_rep.batt_vol) ||
 		(battery_core_info.rep.over_vchg != new_batt_info_rep.over_vchg) ||
 		(battery_core_info.rep.batt_temp != new_batt_info_rep.batt_temp) ||
-		(battery_core_info.rep.charging_enabled != new_batt_info_rep.charging_enabled))) {
+		(battery_core_info.rep.charging_enabled != new_batt_info_rep.charging_enabled) ||
+		(battery_core_info.rep.htc_extension != new_batt_info_rep.htc_extension))) {
 		is_send_batt_uevent = 1;
 	}
 
@@ -1520,6 +1624,9 @@ int htc_battery_core_update_changed(void)
 			"flag=0x%08X,"
 			"AICL=%dmA,"
 			"htc_ext=0x%02X,"
+#ifdef CONFIG_HTC_CHARGER
+			"htcchg=%d,"
+#endif 
 			"level_accu=%d",
 			battery_core_info.rep.batt_id,
 			battery_core_info.rep.level,
@@ -1539,6 +1646,9 @@ int htc_battery_core_update_changed(void)
 			get_kernel_flag(),
 			battery_core_info.rep.aicl_ma,
 			battery_core_info.rep.htc_extension,
+#ifdef CONFIG_HTC_CHARGER
+			battery_core_info.rep.is_htcchg_ext_mode,
+#endif 
 			battery_core_info.rep.level_accu);
 
 	
@@ -1602,6 +1712,27 @@ int htc_battery_core_register(struct device *dev,
 	if (htc_battery->func_show_htc_extension_attr)
 		battery_core_info.func.func_show_htc_extension_attr =
 					htc_battery->func_show_htc_extension_attr;
+	if (htc_battery->func_show_charger_type_attr)
+		battery_core_info.func.func_show_charger_type_attr =
+					htc_battery->func_show_charger_type_attr;
+	if (htc_battery->func_show_thermal_batt_temp_attr)
+		battery_core_info.func.func_show_thermal_batt_temp_attr =
+					htc_battery->func_show_thermal_batt_temp_attr;
+	if (htc_battery->func_show_batt_bidata_attr)
+		battery_core_info.func.func_show_batt_bidata_attr =
+					htc_battery->func_show_batt_bidata_attr;
+	if (htc_battery->func_show_consist_data_attr)
+		battery_core_info.func.func_show_consist_data_attr =
+					htc_battery->func_show_consist_data_attr;
+	if (htc_battery->func_show_cycle_data_attr)
+		battery_core_info.func.func_show_cycle_data_attr =
+					htc_battery->func_show_cycle_data_attr;
+	if (htc_battery->func_show_batt_chked_attr)
+		battery_core_info.func.func_show_batt_chked_attr =
+					htc_battery->func_show_batt_chked_attr;
+	if (htc_battery->func_batt_asp_set_attr)
+		battery_core_info.func.func_batt_asp_set_attr =
+					htc_battery->func_batt_asp_set_attr;
 	if (htc_battery->func_get_battery_info)
 		battery_core_info.func.func_get_battery_info =
 					htc_battery->func_get_battery_info;
@@ -1646,6 +1777,11 @@ int htc_battery_core_register(struct device *dev,
 		battery_core_info.func.func_safety_timer_disable =
 					htc_battery->func_safety_timer_disable;
 
+#ifdef CONFIG_HTC_CHARGER
+	if (htc_battery->func_set_smbchg_property)
+		battery_core_info.func.func_set_smbchg_property =
+					htc_battery->func_set_smbchg_property;
+#endif 
 	
 	for (i = 0; i < ARRAY_SIZE(htc_power_supplies); i++) {
 		rc = power_supply_register(dev, &htc_power_supplies[i]);

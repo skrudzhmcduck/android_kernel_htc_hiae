@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -25,6 +25,7 @@
 #define CEC_BUF_SIZE    (MAX_CEC_FRAME_SIZE + 1)
 #define MAX_SWITCH_NAME_SIZE        5
 #define MSM_DBA_MAX_PCLK 148500
+#define DEFAULT_VIDEO_RESOLUTION HDMI_VFRMT_640x480p60_4_3
 
 struct mdss_dba_utils_data {
 	struct msm_dba_ops ops;
@@ -44,6 +45,7 @@ struct mdss_dba_utils_data {
 	struct cec_ops cops;
 	struct cec_cbs ccbs;
 	char disp_switch_name[MAX_SWITCH_NAME_SIZE];
+	u32 current_vic;
 };
 
 static struct mdss_dba_utils_data *mdss_dba_utils_get_data(
@@ -156,6 +158,30 @@ static ssize_t mdss_dba_utils_sysfs_rda_connected(struct device *dev,
 	return ret;
 }
 
+static ssize_t mdss_dba_utils_sysfs_rda_video_mode(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret;
+	struct mdss_dba_utils_data *udata = NULL;
+
+	if (!dev) {
+		pr_debug("invalid device\n");
+		return -EINVAL;
+	}
+
+	udata = mdss_dba_utils_get_data(dev);
+
+	if (!udata) {
+		pr_debug("invalid input\n");
+		return -EINVAL;
+	}
+
+	ret = snprintf(buf, PAGE_SIZE, "%d\n", udata->current_vic);
+	pr_debug("'%d'\n", udata->current_vic);
+
+	return ret;
+}
+
 static ssize_t mdss_dba_utils_sysfs_wta_hpd(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
@@ -196,11 +222,15 @@ static ssize_t mdss_dba_utils_sysfs_wta_hpd(struct device *dev,
 static DEVICE_ATTR(connected, S_IRUGO,
 		mdss_dba_utils_sysfs_rda_connected, NULL);
 
+static DEVICE_ATTR(video_mode, S_IRUGO,
+		mdss_dba_utils_sysfs_rda_video_mode, NULL);
+
 static DEVICE_ATTR(hpd, S_IRUGO | S_IWUSR, NULL,
 		mdss_dba_utils_sysfs_wta_hpd);
 
 static struct attribute *mdss_dba_utils_fs_attrs[] = {
 	&dev_attr_connected.attr,
+	&dev_attr_video_mode.attr,
 	&dev_attr_hpd.attr,
 	NULL,
 };
@@ -410,6 +440,45 @@ end:
 	return rc;
 }
 
+static int mdss_dba_get_vic_panel_info(struct mdss_dba_utils_data *udata,
+					struct mdss_panel_info *pinfo)
+{
+	struct msm_hdmi_mode_timing_info timing;
+	struct hdmi_util_ds_data ds_data;
+	u32 h_total, v_total, vic = 0;
+
+	if (!udata || !pinfo) {
+		pr_err("%s: invalid input\n", __func__);
+		return 0;
+	}
+
+	timing.active_h = pinfo->xres;
+	timing.back_porch_h = pinfo->lcdc.h_back_porch;
+	timing.front_porch_h = pinfo->lcdc.h_front_porch;
+	timing.pulse_width_h = pinfo->lcdc.h_pulse_width;
+	h_total = (timing.active_h + timing.back_porch_h +
+		timing.front_porch_h + timing.pulse_width_h);
+
+	timing.active_v = pinfo->yres;
+	timing.back_porch_v = pinfo->lcdc.v_back_porch;
+	timing.front_porch_v = pinfo->lcdc.v_front_porch;
+	timing.pulse_width_v = pinfo->lcdc.v_pulse_width;
+	v_total = (timing.active_v + timing.back_porch_v +
+		timing.front_porch_v + timing.pulse_width_v);
+
+	timing.refresh_rate = pinfo->mipi.frame_rate * 1000;
+	timing.pixel_freq = (h_total * v_total *
+				pinfo->mipi.frame_rate) / 1000;
+
+	ds_data.ds_registered = true;
+	ds_data.ds_max_clk = MSM_DBA_MAX_PCLK;
+
+	vic = hdmi_get_video_id_code(&timing, &ds_data);
+	pr_debug("%s: current vic code is %d\n", __func__, vic);
+
+	return vic;
+}
+
 /**
  * mdss_dba_utils_video_on() - Allow clients to switch on the video
  * @data: DBA utils instance which was allocated during registration
@@ -455,11 +524,14 @@ int mdss_dba_utils_video_on(void *data, struct mdss_panel_info *pinfo)
 	if (pinfo->mipi.data_lane3)
 		video_cfg.num_of_input_lanes++;
 
+	/* Get scan information from EDID */
+	video_cfg.vic = mdss_dba_get_vic_panel_info(ud, pinfo);
+	ud->current_vic = video_cfg.vic;
+	video_cfg.scaninfo = hdmi_edid_get_sink_scaninfo(ud->edid_data,
+							video_cfg.vic);
 	if (ud->ops.video_on)
 		ret = ud->ops.video_on(ud->dba_data, true, &video_cfg, 0);
 
-	if (ud->ops.hdcp_enable)
-		ret = ud->ops.hdcp_enable(ud->dba_data, true, true, 0);
 end:
 	return ret;
 }
@@ -486,10 +558,29 @@ int mdss_dba_utils_video_off(void *data)
 	if (ud->ops.video_on)
 		ret = ud->ops.video_on(ud->dba_data, false, NULL, 0);
 
-	if (ud->ops.hdcp_enable)
-		ret = ud->ops.hdcp_enable(ud->dba_data, false, false, 0);
 end:
 	return ret;
+}
+
+/**
+ * mdss_dba_utils_hdcp_enable() - Allow clients to switch on HDCP.
+ * @data: DBA utils instance which was allocated during registration
+ * @enable: flag to enable or disable HDCP authentication
+ *
+ * This API is used to start the HDCP authentication process with the
+ * device registered with DBA.
+ */
+void mdss_dba_utils_hdcp_enable(void *data, bool enable)
+{
+	struct mdss_dba_utils_data *ud = data;
+
+	if (!ud) {
+		pr_err("invalid input\n");
+		return;
+	}
+
+	if (ud->ops.hdcp_enable)
+		ud->ops.hdcp_enable(ud->dba_data, enable, enable, 0);
 }
 
 /**
@@ -583,8 +674,12 @@ void *mdss_dba_utils_init(struct mdss_dba_utils_init_data *uid)
 	}
 
 	/* update edid data to retrieve it back in edid parser */
-	if (uid->pinfo)
+	if (uid->pinfo) {
 		uid->pinfo->edid_data = udata->edid_data;
+		/* Initialize to default resolution */
+		hdmi_edid_set_video_resolution(uid->pinfo->edid_data,
+					DEFAULT_VIDEO_RESOLUTION);
+	}
 
 	/* get edid buffer from edid parser */
 	udata->edid_buf = edid_init_data.buf;

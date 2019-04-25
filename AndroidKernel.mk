@@ -77,10 +77,14 @@ KERNEL_MODULES_OUT := $(TARGET_OUT)/lib/modules
 TARGET_PREBUILT_KERNEL := $(TARGET_PREBUILT_INT_KERNEL)
 $(info TARGET_PREBUILT_KERNEL is $(TARGET_PREBUILT_KERNEL))
 
+ifeq ($(TUXERA_EXFAT_SUPPORT), true)
+ifneq ($(wildcard vendor/tuxera/exfat),)
 KERNEL_ENABLE_EXFAT ?= $(shell cat kernel/arch/$(KERNEL_ARCH)/configs/$(KERNEL_DEFCONFIG) | egrep -v "^\s*\#" | egrep "CONFIG_EXFAT_FS" | sed 's/^\s*CONFIG_EXFAT_FS\s*=\s*//' )
 KERNEL_EXFAT_PATH ?= $(shell cat kernel/arch/$(KERNEL_ARCH)/configs/$(KERNEL_DEFCONFIG) | egrep -v "^\s*\#" | egrep "CONFIG_EXFAT_PATH" | sed 's/^\s*CONFIG_EXFAT_PATH\s*=\s*\"//' | sed 's/\".*//' )
 KERNEL_EXFAT_VERSION ?= $(shell cat kernel/arch/$(KERNEL_ARCH)/configs/$(KERNEL_DEFCONFIG) | egrep -v "^\s*\#" | egrep "CONFIG_EXFAT_VERSION" | sed 's/^\s*CONFIG_EXFAT_VERSION\s*=\s*\"//' | sed 's/\".*//' )
 BUILD_PATH ?= $(shell pwd)
+endif
+endif
 
 define mv-modules
 mdpath=`find $(KERNEL_MODULES_OUT) -type f -name modules.dep`;\
@@ -185,7 +189,7 @@ ifeq ($(KERNEL_ENABLE_EXFAT), m)
 	rm -rf kernel/fs/texfat*
 endif
 
-
+ifneq ($(wildcard vendor/mocana),)
 	$(info start build keydar_build_kernel_modules.sh)
 	vendor/mocana/scripts/keydar_build_kernel_modules.sh -v -M -c $(KERNEL_CROSS_COMPILE) -s `pwd`/vendor/mocana/src/mss -k 3.10 -K `pwd`/$(KERNEL_OUT) -e `pwd`/vendor/mocana/src/ecryptfs-mocana -a `pwd`/vendor/mocana/src/crypto-api-template -D `pwd`/$(KERNEL_MODULES_OUT)
 
@@ -193,6 +197,8 @@ ifeq ($(MOCANA_FIPS_MODULE), true)
 	$(info start build keydar_build_kernel_modules.sh)
 	vendor/mocana/scripts/keydar_build_kernel_modules.sh -v -M -c $(KERNEL_CROSS_COMPILE) -s `pwd`/vendor/mocana/src/mss -k 3.10 -K `pwd`/$(KERNEL_OUT) -r `pwd`/vendor/mocana/src/dm-crypt-mocana -a `pwd`/vendor/mocana/src/crypto-api-template -D `pwd`/$(KERNEL_MODULES_OUT)
 endif
+endif
+
 $(KERNEL_HEADERS_INSTALL): $(KERNEL_OUT)
 	$(hide) if [ ! -z "$(KERNEL_HEADER_DEFCONFIG)" ]; then \
 			$(hide) rm -f ../$(KERNEL_CONFIG); \
@@ -218,4 +224,11 @@ kernelconfig: $(KERNEL_OUT) $(KERNEL_CONFIG)
 	cp $(KERNEL_OUT)/defconfig kernel/arch/$(KERNEL_ARCH)/configs/$(KERNEL_DEFCONFIG)
 
 endif
+endif
+
+# Hack defconfig for QTI USFP
+ifeq ($(HTC_QTI_FINGERPRINT), 1)
+    $(shell sed -i 's/CONFIG_MSM_QBT1000=n/CONFIG_MSM_QBT1000=y/g' kernel/arch/$(KERNEL_ARCH)/configs/$(KERNEL_DEFCONFIG))
+    $(shell sed -i 's/CONFIG_FPR_FPC17=y/CONFIG_FPR_FPC17=n/g' kernel/arch/$(KERNEL_ARCH)/configs/$(KERNEL_DEFCONFIG))
+#    $(shell sed -i 's/CONFIG_EEPROM_AT24=n/CONFIG_EEPROM_AT24=y/g' kernel/arch/$(KERNEL_ARCH)/configs/$(KERNEL_DEFCONFIG))
 endif

@@ -416,6 +416,15 @@ static int __init smd_debugfs_init(void)
 	debug_create("int_stats", 0444, dent, debug_int_stats);
 	debug_create("int_stats_reset", 0444, dent, debug_int_stats_reset);
 
+#ifdef CONFIG_HTC_DEBUG_RIL_PCN0005_HTC_DUMP_SMSM_LOG
+#ifdef CONFIG_DEBUG_FS
+	do {
+		extern int smd_dumplog_debugfs_init(struct dentry *);
+		smd_dumplog_debugfs_init(dent);
+	} while(0);
+#endif//CONFIG_DEBUG_FS
+#endif//CONFIG_HTC_DEBUG_RIL_PCN0005_HTC_DUMP_SMSM_LOG
+
 	return 0;
 }
 

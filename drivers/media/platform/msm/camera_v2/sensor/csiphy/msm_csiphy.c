@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, 2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -38,6 +38,10 @@
 #define MSM_CSIPHY_DRV_NAME                      "msm_csiphy"
 #define CLK_LANE_OFFSET                             1
 #define NUM_LANES_OFFSET                            4
+
+static struct camera_vreg_t csiphy_vreg_info[] = {
+	{"qcom,mipi-csi-vdd", 0, 0, 12000},
+};
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
@@ -122,7 +126,7 @@ static int msm_csiphy_lane_config(struct csiphy_device *csiphy_dev,
 			val |= csiphy_params->csid_core;
 		}
 		msm_camera_io_w(val, csiphy_dev->clk_mux_base);
-		CDBG("%s clk mux addr %p val 0x%x\n", __func__,
+		CDBG("%s clk mux addr %pK val 0x%x\n", __func__,
 			csiphy_dev->clk_mux_base, val);
 		mb();
 	}
@@ -162,6 +166,9 @@ static int msm_csiphy_lane_config(struct csiphy_device *csiphy_dev,
 			csiphybase +
 			csiphy_dev->ctrl_reg->csiphy_reg.
 			mipi_csiphy_glbl_reset_addr);
+		msm_camera_io_w(0x01,
+			csiphybase + csiphy_dev->ctrl_reg->csiphy_reg.
+			mipi_csiphy_glbl_pwg_cfg0_addr);
 	}
 
 	lane_mask &= 0x1f;
@@ -185,6 +192,13 @@ static int msm_csiphy_lane_config(struct csiphy_device *csiphy_dev,
 			mipi_csiphy_interrupt_mask_val, csiphybase +
 			csiphy_dev->ctrl_reg->csiphy_reg.
 			mipi_csiphy_interrupt_clear_addr + 0x4*j);
+		msm_camera_io_w(0x17, csiphybase +
+				csiphy_dev->ctrl_reg->csiphy_reg.
+				mipi_csiphy_lnn_test_imp + 0x40*j);
+		if ((j == 1) || ((j == 3) && (csiphy_params->combo_mode == 1)))
+				msm_camera_io_w(0xFF,
+				csiphybase + csiphy_dev->ctrl_reg->csiphy_reg.
+				mipi_csiphy_lnn_cfg4_addr + 0x40*j);
 		if (csiphy_dev->is_3_1_20nm_hw == 1) {
 			if (j > CLK_LANE_OFFSET) {
 				lane_right = 0x8;
@@ -200,12 +214,6 @@ static int msm_csiphy_lane_config(struct csiphy_device *csiphy_dev,
 				lane_val = 0x4;
 			}
 			if (csiphy_params->combo_mode == 1) {
-				/*
-				* In the case of combo mode, the clock is always
-				* 4th lane for the second sensor.
-				* So check whether the sensor is of one lane
-				* sensor and curr_lane for 0.
-				*/
 				if (curr_lane == 0 &&
 					((csiphy_params->lane_mask &
 						0x18) == 0x18))
@@ -214,9 +222,6 @@ static int msm_csiphy_lane_config(struct csiphy_device *csiphy_dev,
 			msm_camera_io_w(lane_val, csiphybase +
 				csiphy_dev->ctrl_reg->csiphy_reg.
 				mipi_csiphy_lnn_misc1_addr + 0x40*j);
-			msm_camera_io_w(0x17, csiphybase +
-				csiphy_dev->ctrl_reg->csiphy_reg.
-				mipi_csiphy_lnn_test_imp + 0x40*j);
 			curr_lane++;
 		}
 		j++;
@@ -311,13 +316,42 @@ static int msm_csiphy_init(struct csiphy_device *csiphy_dev)
 	}
 	CDBG("%s:%d called\n", __func__, __LINE__);
 
+	rc = msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 1);
+	if (rc < 0) {
+		pr_err("%s: regulator config failed\n", __func__);
+		goto csiphy_vreg_config_fail;
+	}
+	rc = msm_camera_enable_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 1);
+	if (rc < 0) {
+		pr_err("%s: regulator enable failed\n", __func__);
+		goto csiphy_vreg_enable_fail;
+	}
+
+	csiphy_dev->reg_ptr = regulator_get(&(csiphy_dev->pdev->dev),
+					 "qcom,gdscr-vdd");
+	if (IS_ERR_OR_NULL(csiphy_dev->reg_ptr)) {
+		pr_err(" %s: Failed in getting TOP gdscr regulator handle",
+			__func__);
+	} else {
+		rc = regulator_enable(csiphy_dev->reg_ptr);
+		if (rc) {
+			pr_err(" %s: regulator enable failed for GDSCR\n",
+				__func__);
+			goto csiphy_enable_regulator_gdscr_fail;
+		}
+	}
+
 	if (csiphy_dev->hw_dts_version < CSIPHY_VERSION_V30) {
 		rc = msm_cam_clk_enable(&csiphy_dev->pdev->dev,
 			csiphy_clk_info, csiphy_dev->csiphy_clk,
 			csiphy_dev->num_clk, 1);
 	} else if (csiphy_dev->hw_dts_version >= CSIPHY_VERSION_V30) {
 		if (!csiphy_dev->clk_mux_mem || !csiphy_dev->clk_mux_io) {
-			pr_err("%s clk mux mem %p io %p\n", __func__,
+			pr_err("%s clk mux mem %pK io %pK\n", __func__,
 				csiphy_dev->clk_mux_mem,
 				csiphy_dev->clk_mux_io);
 			rc = -ENOMEM;
@@ -371,6 +405,20 @@ static int msm_csiphy_init(struct csiphy_device *csiphy_dev)
 		csiphy_dev->hw_version);
 	csiphy_dev->csiphy_state = CSIPHY_POWER_UP;
 	return 0;
+
+csiphy_enable_regulator_gdscr_fail:
+	rc = msm_camera_enable_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+csiphy_vreg_enable_fail:
+	rc = msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+csiphy_vreg_config_fail:
+	iounmap(csiphy_dev->base);
+	csiphy_dev->base = NULL;
+	return rc;
+
 }
 #else
 static int msm_csiphy_init(struct csiphy_device *csiphy_dev)
@@ -406,6 +454,36 @@ static int msm_csiphy_init(struct csiphy_device *csiphy_dev)
 		rc = -ENOMEM;
 		return rc;
 	}
+
+	rc = msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 1);
+	if (rc < 0) {
+		pr_err("%s: regulator config failed\n", __func__);
+		goto csiphy_vreg_config_fail;
+	}
+	rc = msm_camera_enable_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 1);
+	if (rc < 0) {
+		pr_err("%s: regulator enable failed\n", __func__);
+		goto csiphy_vreg_enable_fail;
+	}
+
+	csiphy_dev->reg_ptr = regulator_get(&(csiphy_dev->pdev->dev),
+					 "qcom,gdscr-vdd");
+	if (IS_ERR_OR_NULL(csiphy_dev->reg_ptr)) {
+		pr_err(" %s: Failed in getting TOP gdscr regulator handle",
+			__func__);
+	} else {
+		rc = regulator_enable(csiphy_dev->reg_ptr);
+		if (rc) {
+			pr_err(" %s: regulator enable failed for GDSCR\n",
+				__func__);
+			goto csiphy_enable_regulator_gdscr_fail;
+		}
+	}
+
 	if (csiphy_dev->hw_dts_version <= CSIPHY_VERSION_V22) {
 		CDBG("%s:%d called\n", __func__, __LINE__);
 		rc = msm_cam_clk_enable(&csiphy_dev->pdev->dev,
@@ -413,7 +491,7 @@ static int msm_csiphy_init(struct csiphy_device *csiphy_dev)
 			csiphy_dev->num_clk, 1);
 	} else if (csiphy_dev->hw_dts_version >= CSIPHY_VERSION_V30) {
 		if (!csiphy_dev->clk_mux_mem || !csiphy_dev->clk_mux_io) {
-			pr_err("%s clk mux mem %p io %p\n", __func__,
+			pr_err("%s clk mux mem %pK io %pK\n", __func__,
 				csiphy_dev->clk_mux_mem,
 				csiphy_dev->clk_mux_io);
 			rc = -ENOMEM;
@@ -465,6 +543,19 @@ static int msm_csiphy_init(struct csiphy_device *csiphy_dev)
 		csiphy_dev->hw_version);
 	csiphy_dev->csiphy_state = CSIPHY_POWER_UP;
 	return 0;
+
+csiphy_enable_regulator_gdscr_fail:
+	rc = msm_camera_enable_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+csiphy_vreg_enable_fail:
+	rc = msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+csiphy_vreg_config_fail:
+	iounmap(csiphy_dev->base);
+	csiphy_dev->base = NULL;
+	return rc;
 }
 #endif
 
@@ -495,7 +586,7 @@ static int msm_csiphy_release(struct csiphy_device *csiphy_dev, void *arg)
 				mipi_csiphy_lnn_cfg2_addr + 0x40*i);
 	} else {
 		if (!csi_lane_params) {
-			pr_err("%s:%d failed: csi_lane_params %p\n", __func__,
+			pr_err("%s:%d failed: csi_lane_params %pK\n", __func__,
 				__LINE__, csi_lane_params);
 			return -EINVAL;
 		}
@@ -552,6 +643,19 @@ static int msm_csiphy_release(struct csiphy_device *csiphy_dev, void *arg)
 			csiphy_dev->num_clk, 0);
 			iounmap(csiphy_dev->clk_mux_base);
 	}
+
+	msm_camera_enable_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+	msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+
+	if (!IS_ERR_OR_NULL(csiphy_dev->reg_ptr)) {
+		regulator_disable(csiphy_dev->reg_ptr);
+		regulator_put(csiphy_dev->reg_ptr);
+	}
+
 	iounmap(csiphy_dev->base);
 	csiphy_dev->base = NULL;
 	csiphy_dev->csiphy_state = CSIPHY_POWER_DOWN;
@@ -584,7 +688,7 @@ static int msm_csiphy_release(struct csiphy_device *csiphy_dev, void *arg)
 				mipi_csiphy_lnn_cfg2_addr + 0x40*i);
 	} else {
 		if (!csi_lane_params) {
-			pr_err("%s:%d failed: csi_lane_params %p\n", __func__,
+			pr_err("%s:%d failed: csi_lane_params %pK\n", __func__,
 				__LINE__, csi_lane_params);
 			return -EINVAL;
 		}
@@ -643,6 +747,18 @@ static int msm_csiphy_release(struct csiphy_device *csiphy_dev, void *arg)
 			iounmap(csiphy_dev->clk_mux_base);
 	}
 
+	msm_camera_enable_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+	msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+
+	if (!IS_ERR_OR_NULL(csiphy_dev->reg_ptr)) {
+		regulator_disable(csiphy_dev->reg_ptr);
+		regulator_put(csiphy_dev->reg_ptr);
+	}
+
 	iounmap(csiphy_dev->base);
 	csiphy_dev->base = NULL;
 	csiphy_dev->csiphy_state = CSIPHY_POWER_DOWN;
@@ -673,6 +789,7 @@ static int32_t msm_csiphy_cmd(struct csiphy_device *csiphy_dev, void *arg)
 			break;
 		}
 		csiphy_dev->csiphy_sof_debug = SOF_DEBUG_DISABLE;
+		csiphy_dev->is_combo_mode = csiphy_params.combo_mode;
 		rc = msm_csiphy_lane_config(csiphy_dev, &csiphy_params);
 		break;
 	case CSIPHY_RELEASE:
@@ -683,7 +800,16 @@ static int32_t msm_csiphy_cmd(struct csiphy_device *csiphy_dev, void *arg)
 			rc = -EFAULT;
 			break;
 		}
-		rc = msm_csiphy_release(csiphy_dev, &csi_lane_params);
+		if ((csiphy_dev->is_combo_mode == 1) &&
+			(csiphy_dev->ref_count == 2)) {
+		
+			pr_err("%s: %d CSIPHY%d core is running in combo"\
+				"mode so power down for next csiphy_release",
+				__func__, __LINE__, csiphy_dev->pdev->id);
+			csiphy_dev->ref_count--;
+		} else {
+			rc = msm_csiphy_release(csiphy_dev, &csi_lane_params);
+		}
 		break;
 	default:
 		pr_err("%s: %d failed\n", __func__, __LINE__);
@@ -840,6 +966,7 @@ static int msm_csiphy_get_clk_info(struct csiphy_device *csiphy_dev,
 static int csiphy_probe(struct platform_device *pdev)
 {
 	struct csiphy_device *new_csiphy_dev;
+	uint32_t csi_vdd_voltage = 0;
 	int rc = 0;
 
 	new_csiphy_dev = kzalloc(sizeof(struct csiphy_device), GFP_KERNEL);
@@ -872,6 +999,19 @@ static int csiphy_probe(struct platform_device *pdev)
 		pr_err("%s: msm_csiphy_get_clk_info() failed", __func__);
 		return -EFAULT;
 	}
+
+	rc = of_property_read_u32((&pdev->dev)->of_node,
+		"qcom,csi-vdd-voltage", &csi_vdd_voltage);
+	if (rc < 0) {
+		pr_err("%s:%d failed to read qcom,csi-vdd-voltage\n",
+			__func__, __LINE__);
+		return rc;
+	}
+	CDBG("%s:%d reading mipi_csi_vdd is %d\n", __func__, __LINE__,
+		csi_vdd_voltage);
+
+	csiphy_vreg_info[0].min_voltage = csi_vdd_voltage;
+	csiphy_vreg_info[0].max_voltage = csi_vdd_voltage;
 
 	new_csiphy_dev->mem = platform_get_resource_byname(pdev,
 					IORESOURCE_MEM, "csiphy");

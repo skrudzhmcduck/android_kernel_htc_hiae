@@ -30,7 +30,7 @@ extern void net_dbg_log_event(const char * event, ...);
 #define NET_DEBUG(fmt, args...) \
 do{ \
 	if(htc_net_debug_enable) \
-		net_dbg_log_event("[NET]" fmt, args); \
+		net_dbg_log_event("[NET]" fmt, ##args); \
 } while(0)
 
 #endif 

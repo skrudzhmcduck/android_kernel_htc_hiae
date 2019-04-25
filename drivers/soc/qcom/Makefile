@@ -1,5 +1,7 @@
 # When adding new entries keep the list in alphabetical order
 CFLAGS_scm.o :=$(call as-instr,.arch_extension sec,-DREQUIRES_SEC=1)
+ccflags-$(CONFIG_MSM_QBT1000) += -Idrivers/misc/
+CFLAGS_qbt1000.o := -DDEBUG
 
 obj-y		+= qdsp6v2/
 
@@ -94,3 +96,4 @@ obj-$(CONFIG_MSM_TEST_PACMAN)        += msm_test_pacman.o
 obj-$(CONFIG_MSM_ONTARIO)        += ontario.o
 obj-$(CONFIG_TRACER_PKT) += tracer_pkt.o
 obj-$(CONFIG_MSM_VSENS) += vsens.o
+obj-$(CONFIG_MSM_QBT1000) += qbt1000.o

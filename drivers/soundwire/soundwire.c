@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -129,6 +129,47 @@ err_out:
 EXPORT_SYMBOL(swr_new_device);
 
 /**
+ * swr_startup_devices - perform additional initialization for child devices
+ *
+ * @swr_dev: pointer to soundwire slave device
+ *
+ * Performs any additional initialization needed for a soundwire slave device.
+ * This is a optional functionality defined by slave devices.
+ * Removes the slave node from the list, in case there is any failure.
+ */
+int swr_startup_devices(struct swr_device *swr_dev)
+{
+	struct swr_driver *swr_drv;
+	struct device *dev;
+	int ret = 0;
+
+	if (!swr_dev)
+		return -EINVAL;
+
+	dev = &swr_dev->dev;
+	if (!dev)
+		return -EINVAL;
+
+	swr_drv = to_swr_driver(dev->driver);
+	if (!swr_drv)
+		return -EINVAL;
+
+	if (swr_drv->startup) {
+		ret = swr_drv->startup(swr_dev);
+		if (ret)
+			goto out;
+
+		dev_dbg(&swr_dev->dev,
+			"%s: startup complete for device %lx\n",
+			__func__, swr_dev->addr);
+	}
+
+out:
+	return ret;
+}
+EXPORT_SYMBOL(swr_startup_devices);
+
+/**
  * of_register_swr_devices - register child devices on to the soundwire bus
  * @master: pointer to soundwire master device
  *
@@ -197,6 +238,75 @@ void swr_port_response(struct swr_master *mstr, u8 tid)
 	kfree(txn);
 }
 EXPORT_SYMBOL(swr_port_response);
+
+/**
+ * swr_remove_from_group - remove soundwire slave devices from group
+ * @dev: pointer to the soundwire slave device
+ * dev_num: device number of the soundwire slave device
+ *
+ * Returns error code for failure and 0 for success
+ */
+int swr_remove_from_group(struct swr_device *dev, u8 dev_num)
+{
+	struct swr_master *master;
+
+	if (!dev)
+		return -ENODEV;
+
+	master = dev->master;
+	if (!master)
+		return -EINVAL;
+
+	if (!dev->group_id)
+		return 0;
+
+	if (master->gr_sid == dev_num)
+		return 0;
+
+	if (master->remove_from_group && master->remove_from_group(master))
+		dev_dbg(&master->dev, "%s: falling back to GROUP_NONE\n",
+			__func__);
+
+	return 0;
+}
+EXPORT_SYMBOL(swr_remove_from_group);
+
+/**
+ * swr_slvdev_datapath_control - Enables/Disables soundwire slave device
+ *                               data path
+ * @dev: pointer to soundwire slave device
+ * @dev_num: device number of the soundwire slave device
+ *
+ * Returns error code for failure and 0 for success
+ */
+int swr_slvdev_datapath_control(struct swr_device *dev, u8 dev_num,
+				bool enable)
+{
+	struct swr_master *master;
+
+	if (!dev)
+		return -ENODEV;
+
+	master = dev->master;
+	if (!master)
+		return -EINVAL;
+
+	if (dev->group_id) {
+		/* Broadcast */
+		if (master->gr_sid != dev_num) {
+			if (!master->gr_sid)
+				master->gr_sid = dev_num;
+			else
+				return 0;
+		}
+	}
+
+	if (master->slvdev_datapath_control)
+		master->slvdev_datapath_control(master, enable);
+
+	return 0;
+}
+EXPORT_SYMBOL(swr_slvdev_datapath_control);
 
 /**
  * swr_connect_port - enable soundwire slave port(s)
@@ -405,8 +515,8 @@ EXPORT_SYMBOL(swr_get_logical_dev_num);
  * This API will read the value of the register address from
  * soundwire slave device
  */
-int swr_read(struct swr_device *dev, u8 dev_num, u32 reg_addr,
-		u32 *buf, u32 len)
+int swr_read(struct swr_device *dev, u8 dev_num, u16 reg_addr,
+	     void *buf, u32 len)
 {
 	struct swr_master *master = dev->master;
 	if (!master)
@@ -414,6 +524,42 @@ int swr_read(struct swr_device *dev, u8 dev_num, u32 reg_addr,
 	return master->read(master, dev_num, reg_addr, buf, len);
 }
 EXPORT_SYMBOL(swr_read);
+
+/**
+ * swr_bulk_write - write soundwire slave device registers
+ * @dev: pointer to soundwire slave device
+ * @dev_num: logical device num of soundwire slave device
+ * @reg_addr: register address of soundwire slave device
+ * @buf: contains value of register address
+ * @len: indicates number of registers
+ *
+ * This API will write the value of the register address to
+ * soundwire slave device
+ */
+int swr_bulk_write(struct swr_device *dev, u8 dev_num, void *reg,
+		   const void *buf, size_t len)
+{
+	struct swr_master *master;
+
+	if (!dev || !dev->master)
+		return -EINVAL;
+
+	master = dev->master;
+	if (dev->group_id) {
+		if (master->gr_sid != dev_num) {
+			if (!master->gr_sid)
+				master->gr_sid = dev_num;
+			else
+				return 0;
+		}
+		dev_num = dev->group_id;
+	}
+	if (master->bulk_write)
+		return master->bulk_write(master, dev_num, reg, buf, len);
+
+	return -ENOSYS;
+}
+EXPORT_SYMBOL(swr_bulk_write);
 
 /**
  * swr_write - write soundwire slave device registers
@@ -425,12 +571,22 @@ EXPORT_SYMBOL(swr_read);
  * This API will write the value of the register address to
  * soundwire slave device
  */
-int swr_write(struct swr_device *dev, u8 dev_num, u32 reg_addr,
-		u32 *buf)
+int swr_write(struct swr_device *dev, u8 dev_num, u16 reg_addr,
+	      const void *buf)
 {
 	struct swr_master *master = dev->master;
 	if (!master)
 		return -EINVAL;
+
+	if (dev->group_id) {
+		if (master->gr_sid != dev_num) {
+			if (!master->gr_sid)
+				master->gr_sid = dev_num;
+			else
+				return 0;
+		}
+		dev_num = dev->group_id;
+	}
 	return master->write(master, dev_num, reg_addr, buf);
 }
 EXPORT_SYMBOL(swr_write);
@@ -519,6 +675,31 @@ int swr_reset_device(struct swr_device *swr_dev)
 	return -ENODEV;
 }
 EXPORT_SYMBOL(swr_reset_device);
+
+/**
+ * swr_set_device_group - Assign group id to the slave devices
+ * @swr_dev: pointer to soundwire slave device
+ * @id: group id to be assigned to slave device
+ * Context: can sleep
+ *
+ * This API will be called either from soundwire master or slave
+ * device to assign group id.
+ */
+int swr_set_device_group(struct swr_device *swr_dev, u8 id)
+{
+	struct swr_master *master;
+
+	if (!swr_dev)
+		return -EINVAL;
+
+	swr_dev->group_id = id;
+	master = swr_dev->master;
+	if (!id && master)
+		master->gr_sid = 0;
+
+	return 0;
+}
+EXPORT_SYMBOL(swr_set_device_group);
 
 static int swr_drv_probe(struct device *dev)
 {

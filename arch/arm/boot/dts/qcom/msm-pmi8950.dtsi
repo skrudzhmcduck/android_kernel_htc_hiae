@@ -28,6 +28,12 @@
 			reg = <0x800 0x100>;
 			qcom,secondary-pon-reset;
 			qcom,cfg-shutdown-for-hard-reset;
+
+			pon_perph_reg: qcom,pon_perph_reg {
+				regulator-name = "pon_spare_reg";
+				qcom,pon-spare-reg-addr = <0x8c>;
+				qcom,pon-spare-reg-bit = <1>;
+			};
 		};
 
 		pmi8950_vadc: vadc@3100 {
@@ -128,18 +134,6 @@
 				qcom,hw-settle-time = <0>;
 				qcom,fast-avg-setup = <0>;
 			};
-
-			chan@10 {
-				label = "case_therm";
-				reg = <0x10>;
-				qcom,decimation = <0>;
-				qcom,pre-div-channel-scaling = <0>;
-				qcom,calibration-type = "ratiometric";
-				qcom,scale-function = <2>;
-				qcom,hw-settle-time = <2>;
-				qcom,fast-avg-setup = <0>;
-				qcom,vadc-thermal-node;
-			};
 		};
 
 		pmi8950_gpios: gpios {
@@ -174,14 +168,9 @@
 			label = "pmi8950-mpp";
 
 			mpp@a000 {
-				/* MPP1 - CASE_THERM config */
 				reg = <0xa000 0x100>;
 				qcom,pin-num = <1>;
-				qcom,mode = <4>; /* AIN input */
-				qcom,invert = <1>; /* Enable MPP */
-				qcom,ain-route = <0>; /* AMUX 5 */
-				qcom,master-en = <1>;
-				qcom,src-sel = <0>; /* Function constant */
+				status = "disabled";
 			};
 
 			mpp@a100 {
@@ -220,9 +209,12 @@
 			qcom,parallel-usb-9v-min-current-ma = <900>;
 			qcom,parallel-allowed-lowering-ma = <500>;
 			qcom,autoadjust-vfloat;
-			qcom,enable-hvdcp-9v;
 			qcom,pmic-revid = <&pmi8950_revid>;
 			qcom,charge-unknown-battery;
+			qcom,force-aicl-rerun;
+			qcom,aicl-rerun-period-s = <180>;
+			qcom,vchg-adc-channel-id = <3>;
+			qcom,vchg_sns-vadc = <&pmi8950_vadc>;
 
 			qcom,chgr@1000 {
 				reg = <0x1000 0x100>;
@@ -308,7 +300,7 @@
 
 				interrupt-names =	"power-ok",
 							"temp-shutdown",
-							"safety-timeout",
+							"wdog-timeout",
 							"flash-fail",
 							"otst2",
 							"otst3";
@@ -329,7 +321,7 @@
 			qcom,pmic-revid = <&pmi8950_revid>;
 			qcom,cycle-counter-en;
 			qcom,capacity-learning-on;
-			qcom,fg-cutoff-voltage-mv = <3400>;
+			qcom,fg-cutoff-voltage-mv = <3500>;
 
 			qcom,fg-soc@4000 {
 			status = "okay";
@@ -437,36 +429,7 @@
 			compatible = "qcom,qpnp-labibb-regulator";
 			#address-cells = <1>;
 			#size-cells = <1>;
-
-			lab_regulator: qcom,lab@de00 {
-				reg = <0xde00 0x100>;
-				reg-names = "lab";
-				regulator-name = "lab_reg";
-
-				regulator-min-microvolt = <4600000>;
-				regulator-max-microvolt = <6000000>;
-
-				qcom,qpnp-lab-min-voltage = <4600000>;
-				qcom,qpnp-lab-step-size = <100000>;
-				qcom,qpnp-lab-slew-rate = <5000>;
-				qcom,qpnp-lab-use-default-voltage;
-				qcom,qpnp-lab-init-voltage = <5500000>;
-				qcom,qpnp-lab-init-amoled-voltage = <4600000>;
-				qcom,qpnp-lab-init-lcd-voltage = <5500000>;
-
-				qcom,qpnp-lab-soft-start = <800>;
-
-				qcom,qpnp-lab-full-pull-down;
-				qcom,qpnp-lab-pull-down-enable;
-				qcom,qpnp-lab-switching-clock-frequency = <1600>;
-				qcom,qpnp-lab-limit-maximum-current = <800>;
-				qcom,qpnp-lab-limit-max-current-enable;
-				qcom,qpnp-lab-ps-threshold = <40>;
-				qcom,qpnp-lab-ps-enable;
-				qcom,qpnp-lab-nfet-size = <100>;
-				qcom,qpnp-lab-pfet-size = <100>;
-				qcom,qpnp-lab-max-precharge-time = <300>;
-			};
+			qcom,pmic-revid = <&pmi8950_revid>;
 
 			ibb_regulator: qcom,ibb@dc00 {
 				reg = <0xdc00 0x100>;
@@ -498,6 +461,37 @@
 				qcom,qpnp-ibb-debounce-cycle = <16>;
 				qcom,qpnp-ibb-limit-max-current-enable;
 				qcom,qpnp-ibb-ps-enable;
+			};
+
+			lab_regulator: qcom,lab@de00 {
+				reg = <0xde00 0x100>;
+				reg-names = "lab";
+				regulator-name = "lab_reg";
+
+				regulator-min-microvolt = <4600000>;
+				regulator-max-microvolt = <6000000>;
+
+				qcom,qpnp-lab-min-voltage = <4600000>;
+				qcom,qpnp-lab-step-size = <100000>;
+				qcom,qpnp-lab-slew-rate = <5000>;
+				qcom,qpnp-lab-use-default-voltage;
+				qcom,qpnp-lab-init-voltage = <5500000>;
+				qcom,qpnp-lab-init-amoled-voltage = <4600000>;
+				qcom,qpnp-lab-init-lcd-voltage = <5500000>;
+
+				qcom,qpnp-lab-soft-start = <800>;
+
+				qcom,qpnp-lab-full-pull-down;
+				qcom,qpnp-lab-pull-down-enable;
+				qcom,qpnp-lab-switching-clock-frequency =
+									<1600>;
+				qcom,qpnp-lab-limit-maximum-current = <800>;
+				qcom,qpnp-lab-limit-max-current-enable;
+				qcom,qpnp-lab-ps-threshold = <40>;
+				qcom,qpnp-lab-ps-enable;
+				qcom,qpnp-lab-nfet-size = <100>;
+				qcom,qpnp-lab-pfet-size = <100>;
+				qcom,qpnp-lab-max-precharge-time = <300>;
 			};
 
 		};
@@ -608,6 +602,9 @@
 				qcom,max-current = <750>;
 				qcom,id = <3>;
 				qcom,current = <120>;
+				reg0 {
+					regulator-name = "pon_spare_reg";
+				};
 			};
 
 			pmi8950_switch: qcom,switch {
@@ -619,6 +616,9 @@
 				qcom,duration = <1280>;
 				qcom,id = <2>;
 				qcom,current = <625>;
+				reg0 {
+					regulator-name = "pon_spare_reg";
+				};
 			};
 		};
 

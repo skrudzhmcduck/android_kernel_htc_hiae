@@ -25,6 +25,7 @@
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/of_platform.h>
+#include <linux/of_address.h>
 #include <linux/msm-bus.h>
 #include <linux/uaccess.h>
 #include <linux/dma-mapping.h>
@@ -46,15 +47,8 @@
 #ifdef CONFIG_HTC_POWER_DEBUG
 #include <soc/qcom/htc_util.h>
 #include <linux/seq_file.h>
-#include <linux/qpnp/pin.h>
 #include <soc/qcom/rpm_stats.h>
 #include "../../../kernel/sched/sched.h"
-#ifdef CONFIG_PINCTRL_MSM_TLMM_V3
-#include <mach/gpio.h>
-#elif defined(CONFIG_PINCTRL_MSM_TLMM)
-#include <linux/pinctrl/pinctrl.h>
-#endif
-extern int htc_vregs_dump(char *vreg_buffer, int curr_len);
 #endif
 
 #if defined(CONFIG_HTC_DEBUG_WATCHDOG)
@@ -76,6 +70,8 @@ static inline int msm_watchdog_resume_deferred(void) { return 0; }
 #define SCLK_HZ (32768)
 
 #define MAX_BUF_SIZE  1024
+
+
 
 enum {
 	MSM_PM_DEBUG_SUSPEND = BIT(0),
@@ -328,73 +324,6 @@ int msm_pm_collapse(unsigned long unused)
 }
 EXPORT_SYMBOL(msm_pm_collapse);
 
-#ifdef CONFIG_HTC_POWER_DEBUG
-static char *gpio_sleep_status_info;
-
-int print_gpio_buffer(struct seq_file *m)
-{
-	if (gpio_sleep_status_info)
-		seq_printf(m, gpio_sleep_status_info);
-	else
-		seq_printf(m, "Device haven't suspended yet!\n");
-	return 0;
-}
-EXPORT_SYMBOL(print_gpio_buffer);
-
-int free_gpio_buffer(void)
-{
-	kfree(gpio_sleep_status_info);
-	gpio_sleep_status_info = NULL;
-
-	return 0;
-}
-EXPORT_SYMBOL(free_gpio_buffer);
-
-static char *vreg_sleep_status_info;
-
-int print_vreg_buffer(struct seq_file *m)
-{
-	if (vreg_sleep_status_info)
-		seq_printf(m, vreg_sleep_status_info);
-	else
-		seq_printf(m, "Device haven't suspended yet!\n");
-
-	return 0;
-}
-EXPORT_SYMBOL(print_vreg_buffer);
-
-int free_vreg_buffer(void)
-{
-	kfree(vreg_sleep_status_info);
-	vreg_sleep_status_info = NULL;
-
-	return 0;
-}
-EXPORT_SYMBOL(free_vreg_buffer);
-
-static char *pmic_reg_sleep_status_info;
-
-int print_pmic_reg_buffer(struct seq_file *m)
-{
-	if (pmic_reg_sleep_status_info)
-		seq_printf(m, pmic_reg_sleep_status_info);
-	else
-		seq_printf(m, "Device haven't suspended yet!\n");
-
-	return 0;
-}
-EXPORT_SYMBOL(print_pmic_reg_buffer);
-
-int free_pmic_reg_buffer(void)
-{
-	kfree(pmic_reg_sleep_status_info);
-	pmic_reg_sleep_status_info = NULL;
-
-	return 0;
-}
-EXPORT_SYMBOL(free_pmic_reg_buffer);
-#endif
-
 static bool __ref msm_pm_spm_power_collapse(
 	unsigned int cpu, bool from_idle, bool notify_rpm)
 {
@@ -402,11 +331,6 @@ static bool __ref msm_pm_spm_power_collapse(
 	bool collapsed = 0;
 	int ret;
 	bool save_cpu_regs = (cpu_online(cpu) || from_idle);
-
-#ifdef CONFIG_HTC_POWER_DEBUG
-        int curr_len = 0;
-	int is_last_core_for_suspend = (!from_idle && cpu_online(cpu));
-#endif
 
 	if (MSM_PM_DEBUG_POWER_COLLAPSE & msm_pm_debug_mask)
 		pr_info("CPU%u: %s: notify_rpm %d\n",
@@ -426,47 +350,6 @@ static bool __ref msm_pm_spm_power_collapse(
 
 #ifdef CONFIG_HTC_DEBUG_FOOTPRINT
 	init_cpu_foot_print(cpu, from_idle, notify_rpm);
-#endif
-
-#ifdef CONFIG_HTC_POWER_DEBUG
-	if (is_last_core_for_suspend) {
-		if (MSM_PM_DEBUG_GPIO & msm_pm_debug_mask) {
-			if (gpio_sleep_status_info) {
-				memset(gpio_sleep_status_info, 0,
-					sizeof(*gpio_sleep_status_info));
-			} else {
-				gpio_sleep_status_info = kmalloc(25000, GFP_ATOMIC);
-				if (!gpio_sleep_status_info) {
-					pr_err("[PM] kmalloc memory failed in %s\n",
-					__func__);
-
-				}
-			}
-
-			curr_len = msm_dump_gpios(NULL, curr_len,
-						gpio_sleep_status_info);
-			curr_len = qpnp_pin_dump(NULL, curr_len,
-						gpio_sleep_status_info);
-
-		}
-
-		if (MSM_PM_DEBUG_VREG & msm_pm_debug_mask) {
-			curr_len = 0;
-			if (vreg_sleep_status_info) {
-				memset(vreg_sleep_status_info, 0,
-					sizeof(*vreg_sleep_status_info));
-			} else {
-				vreg_sleep_status_info = kmalloc(25000, GFP_ATOMIC);
-				if (!vreg_sleep_status_info) {
-					pr_err("kmalloc memory failed in %s\n",
-						__func__);
-
-				}
-			}
-			curr_len = htc_vregs_dump(vreg_sleep_status_info, curr_len);
-		}
-		pr_info("[R] suspend end\n");
-	}
 #endif
 
 	htc_lpm_pre_action(from_idle);
@@ -515,7 +398,7 @@ static bool msm_pm_power_collapse_standalone(
 #ifdef CONFIG_HTC_POWER_DEBUG
 	if (cpu_online(cpu)) {
 		if ((!from_idle) && (MSM_PM_DEBUG_RPM_STAT & msm_pm_debug_mask)){
-			msm_rpm_dump_stat();
+			msm_rpm_dump_stat(false);
 		}
 	}
 #endif
@@ -537,7 +420,7 @@ static bool msm_pm_power_collapse_standalone(
 #ifdef CONFIG_HTC_POWER_DEBUG
 	if (cpu_online(cpu)) {
 		if ((!from_idle) && (MSM_PM_DEBUG_RPM_STAT & msm_pm_debug_mask))
-			msm_rpm_dump_stat();
+			msm_rpm_dump_stat(false);
 	}
 #endif
 
@@ -595,7 +478,7 @@ static bool msm_pm_power_collapse(bool from_idle)
 #ifdef CONFIG_HTC_POWER_DEBUG
 	if (cpu_online(cpu)) {
 		if ((!from_idle) && (MSM_PM_DEBUG_RPM_STAT & msm_pm_debug_mask)){
-			msm_rpm_dump_stat();
+			msm_rpm_dump_stat(false);
 		}
 	}
 #endif
@@ -617,7 +500,7 @@ static bool msm_pm_power_collapse(bool from_idle)
 	if (cpu_online(cpu)) {
 #ifdef CONFIG_HTC_POWER_DEBUG
 		if ((!from_idle) && (MSM_PM_DEBUG_RPM_STAT & msm_pm_debug_mask))
-			msm_rpm_dump_stat();
+			msm_rpm_dump_stat(false);
 		if ((!from_idle) && (MSM_PM_DEBUG_CLOCK & msm_pm_debug_mask))
 #else
 		if (MSM_PM_DEBUG_CLOCK & msm_pm_debug_mask)
@@ -768,11 +651,10 @@ snoc_cl_probe_done:
 
 static int msm_cpu_status_probe(struct platform_device *pdev)
 {
-	struct msm_pm_sleep_status_data *pdata;
-	char *key;
 	u32 cpu;
+	int rc;
 
-	if (!pdev)
+	if (!pdev | !pdev->dev.of_node)
 		return -EFAULT;
 
 	msm_pm_slp_sts = devm_kzalloc(&pdev->dev,
@@ -782,59 +664,34 @@ static int msm_cpu_status_probe(struct platform_device *pdev)
 	if (!msm_pm_slp_sts)
 		return -ENOMEM;
 
-	if (pdev->dev.of_node) {
-		struct resource *res;
-		u32 offset;
-		int rc;
-		u32 mask;
-		bool offset_available = true;
 
-		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-		if (!res)
+	for_each_possible_cpu(cpu) {
+		struct device_node *cpun, *node;
+		char *key;
+
+		cpun = of_get_cpu_node(cpu, NULL);
+
+		if (!cpun) {
+			__WARN();
+			continue;
+		}
+
+		node = of_parse_phandle(cpun, "qcom,sleep-status", 0);
+		if (!node)
 			return -ENODEV;
 
-		key = "qcom,cpu-alias-addr";
-		rc = of_property_read_u32(pdev->dev.of_node, key, &offset);
-
-		if (rc)
-			offset_available = false;
+		msm_pm_slp_sts[cpu].base_addr = of_iomap(node, 0);
+		if (!msm_pm_slp_sts[cpu].base_addr) {
+			pr_err("%s: Can't find base addr\n", __func__);
+			return -ENODEV;
+		}
 
 		key = "qcom,sleep-status-mask";
-		rc = of_property_read_u32(pdev->dev.of_node, key, &mask);
-
-		if (rc)
-			return -ENODEV;
-
-		for_each_possible_cpu(cpu) {
-			phys_addr_t base_c;
-
-			if (offset_available)
-				base_c = res->start + cpu * offset;
-			else {
-				res = platform_get_resource(pdev,
-							IORESOURCE_MEM, cpu);
-				if (!res)
-					return -ENODEV;
-				base_c = res->start;
-			}
-
-			msm_pm_slp_sts[cpu].base_addr =
-				devm_ioremap(&pdev->dev, base_c,
-						resource_size(res));
-			msm_pm_slp_sts[cpu].mask = mask;
-
-			if (!msm_pm_slp_sts[cpu].base_addr)
-				return -ENOMEM;
-		}
-	} else {
-		pdata = pdev->dev.platform_data;
-		if (!pdev->dev.platform_data)
-			return -EINVAL;
-
-		for_each_possible_cpu(cpu) {
-			msm_pm_slp_sts[cpu].base_addr =
-				pdata->base_addr + cpu * pdata->cpu_offset;
-			msm_pm_slp_sts[cpu].mask = pdata->mask;
+		rc = of_property_read_u32(node, key, &msm_pm_slp_sts[cpu].mask);
+		if (rc) {
+			pr_err("%s: Can't find %s property\n", __func__, key);
+			iounmap(msm_pm_slp_sts[cpu].base_addr);
+			return rc;
 		}
 	}
 

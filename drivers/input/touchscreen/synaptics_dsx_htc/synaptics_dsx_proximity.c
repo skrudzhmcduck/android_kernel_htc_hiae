@@ -460,7 +460,7 @@ static void synaptics_rmi4_prox_attn(struct synaptics_rmi4_data *rmi4_data,
 static int synaptics_rmi4_prox_init(struct synaptics_rmi4_data *rmi4_data)
 {
 	int retval;
-	unsigned char attr_count;
+	int attr_count;
 
 	prox = kzalloc(sizeof(*prox), GFP_KERNEL);
 	if (!prox) {
@@ -565,7 +565,7 @@ exit:
 
 static void synaptics_rmi4_prox_remove(struct synaptics_rmi4_data *rmi4_data)
 {
-	unsigned char attr_count;
+	int attr_count;
 
 	if (!prox)
 		goto exit;

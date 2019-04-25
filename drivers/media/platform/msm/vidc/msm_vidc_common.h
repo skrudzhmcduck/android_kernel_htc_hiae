@@ -19,6 +19,8 @@ struct vb2_buf_entry {
 	struct vb2_buffer *vb;
 };
 
+extern const char *const mpeg_video_vidc_extradata[];
+
 enum load_calc_quirks {
 	LOAD_CALC_NO_QUIRKS = 0,
 	LOAD_CALC_IGNORE_TURBO_LOAD = 1 << 0,
@@ -88,4 +90,6 @@ int msm_comm_get_inst_load(struct msm_vidc_inst *inst,
 int msm_comm_get_load(struct msm_vidc_core *core,
 			enum session_type type, enum load_calc_quirks quirks);
 int msm_comm_g_ctrl(struct msm_vidc_inst *inst, int id);
+int msm_comm_set_color_format(struct msm_vidc_inst *inst,
+		enum hal_buffer buffer_type, int fourcc);
 #endif

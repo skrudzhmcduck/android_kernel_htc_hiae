@@ -5,6 +5,7 @@
 #
 
 menu "Miscellaneous I2C Chip support"
+source drivers/i2c/chips/stmvl53l0/Kconfig
 
 config INPUT_CWSTM32
        tristate "CyWee CWSTM32 Sensor HUB"
@@ -142,6 +143,22 @@ config SENSORS_NFC_PN548
 	help
 	  PN548 NFC Driver implemented.
 
+
+config SENSORS_NFC_HIAE_POWER
+	tristate "NFC HIAE Power Control"
+	depends on I2C=y
+	help
+	  PN548 NFC Driver implemented.
+
+
+
+config SENSORS_NFC_PMEC2_POWER
+	tristate "NFC PMEC2 Power Control"
+	depends on I2C=y
+	help
+	  PN548 NFC Driver implemented.
+
+
 config SENSORS_NFC_CXD224X
         tristate "CXD224X NFC sensor support"
         depends on I2C=y
@@ -239,6 +256,12 @@ config AMP_TFA9895L
 	help
 		NXP TFA9895L Speaker AMP Driver implemented by HTC.
 
+config AMP_TFA9888
+	tristate "NXP TFA9888 Speaker AMP Driver"
+	depends on I2C=y
+	help
+		NXP TFA9888 Speaker AMP Driver implemented by HTC.
+
 config INPUT_ISL29028
 	tristate "ISL29028 proximity and light sensor"
 	help
@@ -269,6 +292,13 @@ config SYNC_TOUCH_STATUS
 	default n
 	help
 	  Sync touch i2c switch status to sensor hub
+
+config SYNC_TOUCH_COMBINATION
+        bool "Sync touch i2c switch combination to sensor hub"
+	default n
+	help
+	  Sync touch i2c switch combination to sensor hub
+
 config LIGHTSENSOR_EPL88051
 	bool "enable EPL88051"
 	depends on I2C

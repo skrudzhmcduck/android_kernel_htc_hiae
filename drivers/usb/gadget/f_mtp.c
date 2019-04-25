@@ -36,7 +36,7 @@
 #include <linux/usb/ch9.h>
 #include <linux/usb/f_mtp.h>
 
-#define MTP_RX_BUFFER_INIT_SIZE    1048576
+#define MTP_RX_BUFFER_INIT_SIZE    16384
 #define MTP_BULK_BUFFER_SIZE       16384
 #define INTR_BUFFER_SIZE           28
 #define MTP_THREAD_UNSUPPORT	0
@@ -880,7 +880,10 @@ static void send_file_work(struct work_struct *data)
 		if (hdr_size) {
 			
 			header = (struct mtp_data_header *)req->buf;
-			header->length = __cpu_to_le32(count);
+			if (count > 0xffffffffLL)
+				header->length = 0xffffffff;
+			else
+				header->length = __cpu_to_le32(count);
 			header->type = __cpu_to_le16(2); 
 			header->command = __cpu_to_le16(dev->xfer_command);
 			header->transaction_id =

@@ -1415,7 +1415,8 @@ static int find_lowest_rq_hmp(struct task_struct *task)
 
 	for_each_cpu(i, lowest_mask) {
 		struct rq *rq = cpu_rq(i);
-		cpu_cost = power_cost_at_freq(i, ACCESS_ONCE(rq->min_freq));
+		cpu_cost = power_cost_at_freq(i,
+				ACCESS_ONCE(rq->cluster->min_freq));
 		trace_sched_cpu_load(rq, idle_cpu(i), mostly_idle_cpu(i),
 				     sched_irqload(i), cpu_cost, cpu_temp(i));
 
@@ -1425,7 +1426,7 @@ static int find_lowest_rq_hmp(struct task_struct *task)
 		if (!boost && over_schedule_budget(i))
 			continue;
 
-		if (sched_boost() && capacity(rq) != max_capacity)
+		if (sched_boost() && cpu_capacity(i) != max_capacity)
 			continue;
 
 		if (cpu_cost < min_cost && !sched_cpu_high_irqload(i)) {

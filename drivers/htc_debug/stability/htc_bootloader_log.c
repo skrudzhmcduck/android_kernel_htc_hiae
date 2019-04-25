@@ -20,6 +20,7 @@
 #include <linux/of_platform.h>
 #include <linux/of_fdt.h>
 #include <linux/htc_debug_tools.h>
+#include <asm/uaccess.h>
 
 
 #define RAMLOG_COMPATIBLE_NAME "htc,bldr_log"
@@ -89,10 +90,13 @@ ssize_t bldr_last_log_read_once(char __user *userbuf, ssize_t klog_size)
 {
 	ssize_t len = 0;
 
-	len = (klog_size - bl_last_log_buf_size > 0)? (ssize_t)bl_last_log_buf_size : 0;
+	len = (klog_size > bl_last_log_buf_size)? (ssize_t)bl_last_log_buf_size : 0;
 
 	if (0 < len) {
-		memcpy(userbuf, bl_last_log_buf, len);
+		if (copy_to_user(userbuf, bl_last_log_buf, len)) {
+			pr_warn("bldr_last_log_read_once, copy_to_user failed\n");
+			return 0;
+		}
 	}
 	return len;
 }
@@ -101,10 +105,13 @@ ssize_t bldr_log_read_once(char __user *userbuf, ssize_t klog_size)
 {
 	ssize_t len = 0;
 
-	len = (klog_size - bl_cur_log_buf_size > 0)? (ssize_t)bl_cur_log_buf_size : 0;
+	len = (klog_size > bl_cur_log_buf_size)? (ssize_t)bl_cur_log_buf_size : 0;
 
 	if (0 < len) {
-		memcpy(userbuf, bl_cur_log_buf, len);
+		if(copy_to_user(userbuf, bl_cur_log_buf, len)) {
+			pr_warn("bldr_log_read_once, copy_to_user failed\n");
+			return 0;
+		}
 	}
 	return len;
 }

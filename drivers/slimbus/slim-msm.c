@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -517,29 +517,29 @@ void msm_slim_tx_msg_return(struct msm_slim_ctrl *dev, int err)
 				pr_err("SLIM TX get IOVEC failed:%d", ret);
 			return;
 		}
-		if (addr == dev->bulk.phys) {
-			SLIM_INFO(dev, "BULK WR complete");
-			dev->bulk.in_progress = false;
+		if (addr == dev->bulk.wr_dma) {
+			dma_unmap_single(dev->dev, dev->bulk.wr_dma,
+					 dev->bulk.size, DMA_TO_DEVICE);
 			if (!dev->bulk.cb)
 				SLIM_WARN(dev, "no callback for bulk WR?");
 			else
 				dev->bulk.cb(dev->bulk.ctx, err);
+			dev->bulk.in_progress = false;
 			pm_runtime_mark_last_busy(dev->dev);
 			return;
+		} else if (addr < mem->phys_base ||
+			   (addr > (mem->phys_base +
+				    (MSM_TX_BUFS * SLIM_MSGQ_BUF_LEN)))) {
+			SLIM_WARN(dev, "BUF out of bounds:base:0x%pa, io:0x%pa",
+					&mem->phys_base, &addr);
+			continue;
 		}
 		idx = (int) ((addr - mem->phys_base)
 			/ SLIM_MSGQ_BUF_LEN);
-		if (idx < MSM_TX_BUFS && dev->wr_comp[idx]) {
+		if (dev->wr_comp[idx]) {
 			struct completion *comp = dev->wr_comp[idx];
 			dev->wr_comp[idx] = NULL;
 			complete(comp);
-		} else if (idx >= MSM_TX_BUFS) {
-			SLIM_ERR(dev, "BUF out of bounds:base:0x%pa, io:0x%pa",
-					&mem->phys_base, &addr);
-			
-			sps_get_bam_debug_info(dev->bam.hdl, 93,
-						SPS_BAM_PIPE(4), 0, 2);
-			continue;
 		}
 		if (err) {
 			int i;
@@ -548,10 +548,6 @@ void msm_slim_tx_msg_return(struct msm_slim_ctrl *dev, int err)
 			
 			for (i = 0; i < (SLIM_MSGQ_BUF_LEN >> 2); i++)
 				SLIM_WARN(dev, "err desc[%d]:0x%x", i, addr[i]);
-			
-			if (err == -EINVAL)
-				sps_get_bam_debug_info(dev->bam.hdl, 93,
-							SPS_BAM_PIPE(4), 0, 2);
 		}
 		
 		if (idx != dev->tx_head)
@@ -847,9 +843,7 @@ static int msm_slim_init_rx_msgq(struct msm_slim_ctrl *dev, u32 pipe_reg)
 	struct sps_connect *config = &endpoint->config;
 	struct sps_mem_buffer *descr = &config->desc;
 	struct sps_mem_buffer *mem = &endpoint->buf;
-	struct completion *notify = &dev->rx_msgq_notify;
 
-	init_completion(notify);
 	if (dev->use_rx_msgqs == MSM_MSGQ_DISABLED)
 		return 0;
 
@@ -1111,8 +1105,6 @@ static void msm_slim_remove_ep(struct msm_slim_ctrl *dev,
 	struct sps_mem_buffer *mem = &endpoint->buf;
 
 	msm_slim_sps_mem_free(dev, mem);
-	if (*msgq_flag == MSM_MSGQ_ENABLED)
-		msm_slim_disconnect_endp(dev, endpoint, msgq_flag);
 	msm_slim_sps_mem_free(dev, descr);
 	msm_slim_free_endpoint(endpoint);
 }
@@ -1123,13 +1115,16 @@ void msm_slim_deinit_ep(struct msm_slim_ctrl *dev,
 {
 	int ret = 0;
 	struct sps_connect *config = &endpoint->config;
-	if (config->mode == SPS_MODE_SRC) {
-		ret = msm_slim_discard_rx_data(dev, endpoint);
-		if (ret)
-			SLIM_WARN(dev, "discarding Rx data failed\n");
+
+	if (*msgq_flag == MSM_MSGQ_ENABLED) {
+		if (config->mode == SPS_MODE_SRC) {
+			ret = msm_slim_discard_rx_data(dev, endpoint);
+			if (ret)
+				SLIM_WARN(dev, "discarding Rx data failed\n");
+		}
+		msm_slim_disconnect_endp(dev, endpoint, msgq_flag);
+		msm_slim_remove_ep(dev, endpoint, msgq_flag);
 	}
-	msm_slim_disconnect_endp(dev, endpoint, msgq_flag);
-	msm_slim_remove_ep(dev, endpoint, msgq_flag);
 }
 
 static void msm_slim_sps_unreg_event(struct sps_pipe *sps)
@@ -1365,9 +1360,12 @@ static void msm_slim_qmi_recv_msg(struct kthread_work *work)
 	struct msm_slim_qmi *qmi =
 			container_of(work, struct msm_slim_qmi, kwork);
 
-	rc = qmi_recv_msg(qmi->handle);
-	if (rc < 0)
-		pr_err("%s: Error receiving QMI message\n", __func__);
+	
+	do {
+		rc = qmi_recv_msg(qmi->handle);
+	} while (rc == 0);
+	if (rc != -ENOMSG)
+		pr_err("%s: Error receiving QMI message:%d\n", __func__, rc);
 }
 
 static void msm_slim_qmi_notify(struct qmi_handle *handle,
@@ -1417,9 +1415,12 @@ static int msm_slim_qmi_send_select_inst_req(struct msm_slim_ctrl *dev,
 	resp_desc.ei_array = slimbus_select_inst_resp_msg_v01_ei;
 
 	rc = qmi_send_req_wait(dev->qmi.handle, &req_desc, req, sizeof(*req),
-					&resp_desc, &resp, sizeof(resp), 5000);
+			&resp_desc, &resp, sizeof(resp), SLIM_QMI_RESP_TOUT);
 	if (rc < 0) {
 		SLIM_ERR(dev, "%s: QMI send req failed %d\n", __func__, rc);
+#ifdef CONFIG_HTC_DEBUG_DSP
+                BUG_ON(1);
+#endif
 		return rc;
 	}
 
@@ -1453,12 +1454,12 @@ static int msm_slim_qmi_send_power_request(struct msm_slim_ctrl *dev,
 	resp_desc.ei_array = slimbus_power_resp_msg_v01_ei;
 
 	rc = qmi_send_req_wait(dev->qmi.handle, &req_desc, req, sizeof(*req),
-					&resp_desc, &resp, sizeof(resp), 5000);
+			&resp_desc, &resp, sizeof(resp), SLIM_QMI_RESP_TOUT);
 	if (rc < 0) {
 		SLIM_ERR(dev, "%s: QMI send req failed %d\n", __func__, rc);
 #ifdef CONFIG_HTC_DEBUG_DSP
 		pr_err("trigger ramdump to keep status\n");
-		BUG();
+		BUG_ON(1);
 #endif
 		return rc;
 	}
@@ -1507,7 +1508,7 @@ int msm_slim_qmi_init(struct msm_slim_ctrl *dev, bool apps_is_master)
 	}
 
 	
-	req.instance = dev->ctrl.nr - 1;
+	req.instance = (dev->ctrl.nr >> 1);
 	req.mode_valid = 1;
 
 	
@@ -1575,9 +1576,12 @@ int msm_slim_qmi_check_framer_request(struct msm_slim_ctrl *dev)
 	resp_desc.ei_array = slimbus_chkfrm_resp_msg_v01_ei;
 
 	rc = qmi_send_req_wait(dev->qmi.handle, &req_desc, NULL, 0,
-					&resp_desc, &resp, sizeof(resp), 5000);
+		&resp_desc, &resp, sizeof(resp), SLIM_QMI_RESP_TOUT);
 	if (rc < 0) {
 		SLIM_ERR(dev, "%s: QMI send req failed %d\n", __func__, rc);
+#ifdef CONFIG_HTC_DEBUG_DSP
+                BUG_ON(1);
+#endif
 		return rc;
 	}
 	

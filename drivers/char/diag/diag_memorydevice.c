@@ -174,7 +174,7 @@ int diag_md_write(int id, unsigned char *buf, int len, int ctx)
 		}
 		found = 1;
 		driver->data_ready[i] |= USERMODE_DIAGFWD;
-		DIAG_DBUG("diag: wake up logging process\n");
+		SDLOG_DBUG("diag: wake up logging process\n");
 		wake_up_interruptible(&driver->wait_q);
 	}
 

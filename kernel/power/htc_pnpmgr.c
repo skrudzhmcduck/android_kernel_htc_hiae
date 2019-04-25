@@ -18,8 +18,12 @@
 #include <linux/cpufreq.h>
 #include <linux/htc_pnpmgr.h>
 #include <linux/of.h>
+#include <linux/htc_fda.h>
 
 #include "power.h"
+#ifdef CONFIG_MSM_KGSL
+#include "../../drivers/gpu/msm/kgsl_device.h"
+#endif
 
 #define MAX_BUF     100
 #define MAX_VALUE   999999999    
@@ -108,10 +112,13 @@ static ssize_t _name##_store					\
 }
 
 extern void set_ktm_freq_limit(uint32_t freq_limit);
+#ifdef CONFIG_BATTERY_BCL
 extern void set_bcl_freq_limit(uint32_t freq_limit);
+#endif
 
 static char activity_buf[MAX_BUF];
 static char non_activity_buf[MAX_BUF];
+static char profile_buf[MAX_BUF];
 static char media_mode_buf[MAX_BUF];
 static char virtual_display_buf[MAX_BUF];
 static int app_timeout_expired;
@@ -136,6 +143,10 @@ power_attr(activity_trigger);
 define_string_show(non_activity_trigger, non_activity_buf);
 define_string_store(non_activity_trigger, non_activity_buf, null_cb);
 power_attr(non_activity_trigger);
+
+define_string_show(profile, profile_buf);
+define_string_store(profile, profile_buf, null_cb);
+power_attr(profile);
 
 define_string_show(media_mode, media_mode_buf);
 define_string_store(media_mode, media_mode_buf, null_cb);
@@ -169,8 +180,9 @@ static int thermal_cpus_offlined_value = 0;
 static int thermal_batt_value;
 static int data_throttling_value;
 static int thermal_ktm_freq_limit_value = MAX_VALUE;
+#ifdef CONFIG_BATTERY_BCL
 static int thermal_bcl_freq_limit_value = MAX_VALUE;
-
+#endif
 
 define_int_show(thermal_g0, thermal_g0_value);
 define_int_store(thermal_g0, thermal_g0_value, null_cb);
@@ -221,6 +233,7 @@ thermal_ktm_freq_limit_store(struct kobject *kobj, struct kobj_attribute *attr,
 }
 power_attr(thermal_ktm_freq_limit);
 
+#ifdef CONFIG_BATTERY_BCL
 define_int_show(thermal_bcl_freq_limit, thermal_bcl_freq_limit_value);
 static ssize_t
 thermal_bcl_freq_limit_store(struct kobject *kobj, struct kobj_attribute *attr,
@@ -236,10 +249,15 @@ thermal_bcl_freq_limit_store(struct kobject *kobj, struct kobj_attribute *attr,
 	return -EINVAL;
 }
 power_attr(thermal_bcl_freq_limit);
+#endif
 
 static int default_rule_value = 1;
 define_int_show(default_rule, default_rule_value);
 power_ro_attr(default_rule);
+
+#ifdef CONFIG_MSM_KGSL
+static int get_gpu_max_clk_by_kgsl(void);
+#endif
 
 static unsigned int info_gpu_max_clk;
 void set_gpu_clk(unsigned int value)
@@ -252,7 +270,10 @@ gpu_max_clk_show(struct kobject *kobj, struct kobj_attribute *attr,
                 char *buf)
 {
 	int ret = 0;
-	ret = sprintf(buf, "%u", info_gpu_max_clk);
+#ifdef CONFIG_MSM_KGSL
+	get_gpu_max_clk_by_kgsl();
+#endif
+	ret = sprintf(buf, "%u\n", info_gpu_max_clk);
 	return ret;
 }
 power_ro_attr(gpu_max_clk);
@@ -437,7 +458,7 @@ long_duration_touch_boost_store(struct kobject *kobj, struct kobj_attribute *att
 }
 power_attr(long_duration_touch_boost);
 
-static int launch_event_enabled = 0;
+int launch_event_enabled = 0;
 define_int_show(launch_event, launch_event_enabled);
 define_int_store(launch_event, launch_event_enabled, null_cb);
 power_attr(launch_event);
@@ -1021,7 +1042,9 @@ static struct attribute *thermal_g[] = {
 	&thermal_cpus_offlined_attr.attr,
 	&pause_dt_attr.attr,
 	&thermal_ktm_freq_limit_attr.attr,
+#ifdef CONFIG_BATTERY_BCL
 	&thermal_bcl_freq_limit_attr.attr,
+#endif
 	&thermal_temp_emmc_attr.attr,
 	&cpu_asn_attr.attr,
 	NULL,
@@ -1030,6 +1053,7 @@ static struct attribute *thermal_g[] = {
 static struct attribute *apps_g[] = {
 	&activity_trigger_attr.attr,
 	&non_activity_trigger_attr.attr,
+	&profile_attr.attr,
 	&media_mode_attr.attr,
 	&app_timeout_attr.attr,
 	&trace_trigger_attr.attr,
@@ -1203,7 +1227,7 @@ static int get_cpu_frequency(struct cpumask *mask, int *min, int *max)
 	return 0;
 }
 
-static void init_cluster_info_by_topology(void)
+static int init_cluster_info_by_topology(void)
 {
 	struct cpumask *mask[2];
 	int base[2], minfreq[2], maxfreq[2];
@@ -1214,7 +1238,8 @@ static void init_cluster_info_by_topology(void)
 
 	mask[0] = topology_core_cpumask(0);
 	base[0] = cpumask_first(mask[0]);
-	get_cpu_frequency(mask[0], &minfreq[0], &maxfreq[0]);
+	if (get_cpu_frequency(mask[0], &minfreq[0], &maxfreq[0]))
+		return -EINVAL;
 
 	if (cpumask_weight(mask[0]) == num_possible_cpus()) {
 		cluster_num = 1;
@@ -1222,7 +1247,8 @@ static void init_cluster_info_by_topology(void)
 		cpumask_copy(mask[1], cpu_possible_mask);
 		cpumask_andnot(mask[1], mask[1], mask[0]);
 		base[1] = cpumask_first(mask[1]);
-		get_cpu_frequency(mask[1], &minfreq[1], &maxfreq[1]);
+		if (get_cpu_frequency(mask[1], &minfreq[1], &maxfreq[1]))
+			return -EINVAL;
 
 		
 		if (maxfreq[0] < maxfreq[1]) {
@@ -1254,6 +1280,8 @@ static void init_cluster_info_by_topology(void)
 		for (j = 0; j < k; j++)
 			info[i].thermal_freq[j] = MAX_VALUE;
 	}
+
+	return 0;
 }
 
 static int init_cluster_info_by_dt(const struct device_node *node)
@@ -1289,7 +1317,8 @@ static int init_cluster_info_by_dt(const struct device_node *node)
 	for (i = 0; i < cluster_cnt; i++) {
 
 		first_cpu = cpumask_first(&cluster_cpus[i]);
-		get_cpu_frequency(&cluster_cpus[i], &minfreq, &maxfreq);
+		if (get_cpu_frequency(&cluster_cpus[i], &minfreq, &maxfreq))
+			return -EINVAL;
 
 		info[i].mp_cpunum_max = info[i].num_cpus = cpumask_weight(&cluster_cpus[i]);
 		info[i].max_freq_info = maxfreq;
@@ -1387,10 +1416,10 @@ fail:
 	return ret;
 }
 
-static void init_cluster_info(void)
+static int init_cluster_info(void)
 {
 	const struct device_node *top = NULL;
-	int ret;
+	int ret = 0;
 
 	top = of_find_node_by_path("/soc/htc_pnpmgr");
 
@@ -1403,7 +1432,7 @@ static void init_cluster_info(void)
 		pr_info("%s: cluster dt fail or not found, try to get cluster info from topology\n",
 			__func__);
 
-		init_cluster_info_by_topology();
+		ret = init_cluster_info_by_topology();
 	}
 
 	if(top){
@@ -1419,9 +1448,37 @@ static void init_cluster_info(void)
 			pr_info("%s:find perf table info in board file\n", __func__);
 			info[BC_TYPE].perf_table = pnp_perf_data->bc_perf_table;
 			info[LC_TYPE].perf_table = pnp_perf_data->lc_perf_table;
+			ret = 0;
 		}
 	}
+
+	return ret;
 }
+
+#ifdef CONFIG_MSM_KGSL
+static int get_gpu_max_clk_by_kgsl(void)
+{
+	struct kgsl_device *device = kgsl_get_device(KGSL_DEVICE_3D0);
+	struct kgsl_pwrctrl *pwr;
+
+	if(device == NULL)
+	{
+		pr_err("%s: KGSL device is null\n", __func__);
+		return -EINVAL;
+	}
+
+	pwr = &device->pwrctrl;
+
+	if(!pwr || !pwr->pwrlevels || !(pwr->pwrlevels[0].gpu_freq > 0))
+	{
+		pr_err("i%s: Invalid KGSL values\n", __func__);
+		return -EINVAL;
+	}
+	set_gpu_clk(pwr->pwrlevels[0].gpu_freq);
+
+	return 0;
+}
+#endif
 
 static int __init pnpmgr_init(void)
 {
@@ -1439,7 +1496,8 @@ static int __init pnpmgr_init(void)
 
 	if (!pnpmgr_kobj) {
 		pr_err("%s: Can not allocate enough memory for pnpmgr.\n", __func__);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err;
 	}
 
 	mp_hotplug_kobj = kobject_create_and_add("hotplug", pnpmgr_kobj);
@@ -1452,22 +1510,26 @@ static int __init pnpmgr_init(void)
 
 	if (!mp_hotplug_kobj || !thermal_kobj || !apps_kobj || !display_kobj || !sysinfo_kobj || !battery_kobj || !cluster_root_kobj) {
 		pr_err("%s: Can not allocate enough memory.\n", __func__);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err;
 	}
 
-	init_cluster_info();
+	if ((ret = init_cluster_info()) < 0)
+		goto err;
 
 	for (i = 0; i < cluster_num; i++) {
 		cluster_kobj[i] = kobject_create_and_add(name[i], cluster_root_kobj);
 		if (!cluster_kobj[i]) {
 			pr_err("%s: Can not allocate enough memory for cluster%d\n", __func__, i);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto err;
 		}
 
 		hotplug_kobj[i] = kobject_create_and_add("hotplug", cluster_kobj[i]);
 		if (!hotplug_kobj[i]) {
 			pr_err("%s: Can not allocate enough memory for cluster%d hotplug\n", __func__, i);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto err;
 		}
 
 		if (info[i].is_sync)
@@ -1478,7 +1540,8 @@ static int __init pnpmgr_init(void)
 		cpuX_kobj[i][0] = kobject_create_and_add("cpu0", cluster_kobj[i]);
 		if (!cpuX_kobj[i][0]) {
 			pr_err("%s: Can not allocate enough memory for cluster%d cpu0\n", __func__, i);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto err;
 		}
 
 		for (j = 1; j < info[i].num_cpus; j++) {
@@ -1488,13 +1551,15 @@ static int __init pnpmgr_init(void)
 				ret = sysfs_create_link_nowarn(cluster_kobj[i], cpuX_kobj[i][0], buf);
 				if (ret) {
 					pr_err("%s: Can not create symlink for cluster%d cpu%d\n", __func__, i, j);
-					return -ENOENT;
+					ret = -ENOENT;
+					goto err;
 				}
 			} else {
 				cpuX_kobj[i][j] = kobject_create_and_add(buf, cluster_kobj[i]);
 				if (!cpuX_kobj[i][j]) {
 					pr_err("%s: Can not allocate enough memory for cluster%d cpu%d\n", __func__, i, j);
-					return -ENOMEM;
+					ret = -ENOMEM;
+					goto err;
 				}
 			}
 		}
@@ -1520,7 +1585,8 @@ static int __init pnpmgr_init(void)
 
 	if (ret) {
 		pr_err("%s: sysfs_create_group failed\n", __func__);
-		return ret;
+		ret = -ENOMEM;
+		goto err;
 	}
 
 #ifdef CONFIG_HOTPLUG_CPU
@@ -1528,6 +1594,10 @@ static int __init pnpmgr_init(void)
 #endif
 
 	return 0;
+
+err:
+	fda_log_pnp("pnpmgr init fail\n");
+	return ret;
 }
 
 static void  __exit pnpmgr_exit(void)

@@ -538,8 +538,10 @@ static int profile_enable_set(void *data, u64 val)
 	if (val && profile->log_buffer == NULL) {
 		/* allocate profile_log_buffer the first time enabled */
 		profile->log_buffer = vmalloc(ADRENO_PROFILE_LOG_BUF_SIZE);
-		if (profile->log_buffer == NULL)
+		if (profile->log_buffer == NULL) {
+			mutex_unlock(&device->mutex);
 			return -ENOMEM;
+		}
 		profile->log_tail = profile->log_buffer;
 		profile->log_head = profile->log_buffer;
 	}
@@ -792,7 +794,7 @@ error_free:
 	return size;
 }
 
-static int _pipe_print_pending(char *ubuf, size_t max)
+static int _pipe_print_pending(char __user *ubuf, size_t max)
 {
 	loff_t unused = 0;
 	char str[] = "Operation Would Block!";
@@ -802,11 +804,11 @@ static int _pipe_print_pending(char *ubuf, size_t max)
 }
 
 static int _pipe_print_results(struct adreno_device *adreno_dev,
-		char *ubuf, size_t max)
+		char __user *ubuf, size_t max)
 {
 	struct adreno_profile *profile = &adreno_dev->profile;
 	const char *grp_name;
-	char *usr_buf = ubuf;
+	char __user *usr_buf = ubuf;
 	unsigned int *log_ptr = NULL, *tmp_log_ptr = NULL;
 	int len, i;
 	int status = 0;
@@ -946,7 +948,7 @@ static ssize_t profile_pipe_print(struct file *filep, char __user *ubuf,
 	struct kgsl_device *device = (struct kgsl_device *) filep->private_data;
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 	struct adreno_profile *profile = &adreno_dev->profile;
-	char *usr_buf = ubuf;
+	char __user *usr_buf = ubuf;
 	int status = 0;
 
 	/*

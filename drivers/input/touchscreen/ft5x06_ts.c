@@ -31,6 +31,12 @@
 #include <linux/debugfs.h>
 #include <linux/sensors.h>
 #include <linux/input/ft5x06_ts.h>
+#include <linux/init.h>
+#include <linux/fs.h>
+#include <linux/uaccess.h>
+#include <linux/kobject.h>
+#include <linux/sysfs.h>
+
 
 #if defined(CONFIG_FB)
 #include <linux/notifier.h>
@@ -156,6 +162,9 @@
 #define FT_FW_FILE_MAJ_VER_FT6X36(x)	((x)->data[0x10a])
 #define FT_FW_FILE_VENDOR_ID_FT6X36(x)	((x)->data[0x108])
 
+#define FT_SYSFS_TS_INFO		"ts_info"
+
+
 /**
 * Application data verification will be run before upgrade flow.
 * Firmware image stores some flags with negative and positive value
@@ -257,7 +266,9 @@ struct ft5x06_ts_data {
 	u32 tch_data_len;
 	u8 fw_ver[3];
 	u8 fw_vendor_id;
+	struct kobject ts_info_kobj;
 #if defined(CONFIG_FB)
+	struct work_struct fb_notify_work;
 	struct notifier_block fb_notif;
 #elif defined(CONFIG_HAS_EARLYSUSPEND)
 	struct early_suspend early_suspend;
@@ -1286,6 +1297,13 @@ static int ft5x06_ts_resume(struct device *dev)
 #endif
 
 #if defined(CONFIG_FB)
+static void fb_notify_resume_work(struct work_struct *work)
+{
+	struct ft5x06_ts_data *ft5x06_data =
+		container_of(work, struct ft5x06_ts_data, fb_notify_work);
+	ft5x06_ts_resume(&ft5x06_data->client->dev);
+}
+
 static int fb_notifier_callback(struct notifier_block *self,
 				 unsigned long event, void *data)
 {
@@ -1294,13 +1312,27 @@ static int fb_notifier_callback(struct notifier_block *self,
 	struct ft5x06_ts_data *ft5x06_data =
 		container_of(self, struct ft5x06_ts_data, fb_notif);
 
-	if (evdata && evdata->data && event == FB_EVENT_BLANK &&
-			ft5x06_data && ft5x06_data->client) {
+	if (evdata && evdata->data && ft5x06_data && ft5x06_data->client) {
 		blank = evdata->data;
-		if (*blank == FB_BLANK_UNBLANK)
-			ft5x06_ts_resume(&ft5x06_data->client->dev);
-		else if (*blank == FB_BLANK_POWERDOWN)
-			ft5x06_ts_suspend(&ft5x06_data->client->dev);
+		if (ft5x06_data->pdata->resume_in_workqueue) {
+			if (event == FB_EARLY_EVENT_BLANK &&
+						 *blank == FB_BLANK_UNBLANK)
+				schedule_work(&ft5x06_data->fb_notify_work);
+			else if (event == FB_EVENT_BLANK &&
+						 *blank == FB_BLANK_POWERDOWN) {
+				flush_work(&ft5x06_data->fb_notify_work);
+				ft5x06_ts_suspend(&ft5x06_data->client->dev);
+			}
+		} else {
+			if (event == FB_EVENT_BLANK) {
+				if (*blank == FB_BLANK_UNBLANK)
+					ft5x06_ts_resume(
+						&ft5x06_data->client->dev);
+				else if (*blank == FB_BLANK_POWERDOWN)
+					ft5x06_ts_suspend(
+						&ft5x06_data->client->dev);
+			}
+		}
 	}
 
 	return 0;
@@ -1741,6 +1773,23 @@ static ssize_t ft5x06_fw_name_store(struct device *dev,
 
 static DEVICE_ATTR(fw_name, 0664, ft5x06_fw_name_show, ft5x06_fw_name_store);
 
+
+static ssize_t ft5x06_ts_info_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	struct ft5x06_ts_data *data = container_of(kobj,
+			struct ft5x06_ts_data, ts_info_kobj);
+	return snprintf(buf, FT_INFO_MAX_LEN,
+			"vendor name = Focaltech\n"
+			"model = 0x%x\n"
+			"fw_verion = %d.%d.%d\n",
+			data->family_id, data->fw_ver[0],
+			data->fw_ver[1], data->fw_ver[2]);
+}
+
+static struct kobj_attribute ts_info_attribute = __ATTR(ts_info,
+					0664, ft5x06_ts_info_show, NULL);
+
 static bool ft5x06_debug_addr_is_valid(int addr)
 {
 	if (addr < 0 || addr > 0xFF) {
@@ -2050,6 +2099,9 @@ static int ft5x06_parse_dt(struct device *dev,
 	pdata->gesture_support = of_property_read_bool(np,
 						"focaltech,gesture-support");
 
+	pdata->resume_in_workqueue = of_property_read_bool(np,
+					"focaltech,resume-in-workqueue");
+
 	rc = of_property_read_u32(np, "focaltech,family-id", &temp_val);
 	if (!rc)
 		pdata->family_id = temp_val;
@@ -2094,7 +2146,6 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 	u8 reg_value;
 	u8 reg_addr;
 	int err, len;
-
 	if (client->dev.of_node) {
 		pdata = devm_kzalloc(&client->dev,
 			sizeof(struct ft5x06_ts_platform_data), GFP_KERNEL);
@@ -2437,6 +2488,20 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 
 	dev_dbg(&client->dev, "touch threshold = %d\n", reg_value * 4);
 
+	/*creation touch panel info kobj*/
+	data->ts_info_kobj = *(kobject_create_and_add(FT_SYSFS_TS_INFO,
+					kernel_kobj));
+	if (!&(data->ts_info_kobj)) {
+		dev_err(&client->dev, "kob creation failed .\n");
+	} else {
+		err = sysfs_create_file(&(data->ts_info_kobj),
+					&ts_info_attribute.attr);
+		if (err) {
+			kobject_put(&(data->ts_info_kobj));
+			dev_err(&client->dev, "sysfs create fail .\n");
+		}
+	}
+
 	ft5x06_update_fw_ver(data);
 	ft5x06_update_fw_vendor_id(data);
 
@@ -2447,6 +2512,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 			data->fw_ver[1], data->fw_ver[2]);
 
 #if defined(CONFIG_FB)
+	INIT_WORK(&data->fb_notify_work, fb_notify_resume_work);
 	data->fb_notif.notifier_call = fb_notifier_callback;
 
 	err = fb_register_client(&data->fb_notif);
@@ -2461,7 +2527,6 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 	data->early_suspend.resume = ft5x06_ts_late_resume;
 	register_early_suspend(&data->early_suspend);
 #endif
-
 	return 0;
 
 free_debug_dir:
@@ -2608,7 +2673,7 @@ static int ft5x06_ts_remove(struct i2c_client *client)
 		ft5x06_power_init(data, false);
 
 	input_unregister_device(data->input_dev);
-
+	kobject_put(&(data->ts_info_kobj));
 	return 0;
 }
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -185,6 +185,7 @@ static void diag_state_open_socket(void *ctxt)
 		return;
 
 	info = (struct diag_socket_info *)(ctxt);
+	DIAGFWD_DBUG("openingsocket channel for %s\n",info->name);
 	atomic_set(&info->diag_state, 1);
 	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 		 "%s setting diag state to 1", info->name);
@@ -198,10 +199,11 @@ static void diag_state_close_socket(void *ctxt)
 		return;
 
 	info = (struct diag_socket_info *)(ctxt);
+	DIAGFWD_DBUG("closing socket statefor port type %dsvcid %d isntance %d",info->port_type,info->svc_id,info->ins_id);
 	atomic_set(&info->diag_state, 0);
 	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 		 "%s setting diag state to 0", info->name);
-	wake_up(&info->read_wait_q);
+	wake_up_interruptible(&info->read_wait_q);
 	flush_workqueue(info->wq);
 }
 
@@ -209,6 +211,8 @@ static void socket_data_ready(struct sock *sk_ptr, int bytes)
 {
 	unsigned long flags;
 	struct diag_socket_info *info = NULL;
+
+	DIAGFWD_DBUG("entered socket data ready\n");
 
 	if (!sk_ptr) {
 		pr_err_ratelimited("diag: In %s, invalid sk_ptr", __func__);
@@ -221,29 +225,32 @@ static void socket_data_ready(struct sock *sk_ptr, int bytes)
 		return;
 	}
 
+	DIAGSOCKET_DBUG("socket data ready from %s \n", info->name);
+
+	DIAGFWD_DBUG("Received interrupt for instance %d svcid %d\n",info->ins_id,info->svc_id);
+
 	spin_lock_irqsave(&info->lock, flags);
 	info->data_ready++;
 	spin_unlock_irqrestore(&info->lock, flags);
 	diag_ws_on_notify();
 
-	if (!atomic_read(&info->opened) && info->port_type == PORT_TYPE_SERVER)
-		diagfwd_buffers_init(info->fwd_ctxt);
-
 	queue_work(info->wq, &(info->read_work));
-	wake_up(&info->read_wait_q);
+	DIAGFWD_DBUG("waking up read wait queue for instance %d svcid %d\n",info->ins_id,info->svc_id);
+	wake_up_interruptible(&info->read_wait_q);
 	return;
 }
 
 static void cntl_socket_data_ready(struct sock *sk_ptr, int bytes)
 {
 	if (!sk_ptr || !cntl_socket) {
-		pr_err_ratelimited("diag: In %s, invalid ptrs. sk_ptr: %p cntl_socket: %p\n",
+		pr_err_ratelimited("diag: In %s, invalid ptrs. sk_ptr: %pK cntl_socket: %pK\n",
 				   __func__, sk_ptr, cntl_socket);
 		return;
 	}
 
 	atomic_inc(&cntl_socket->data_ready);
-	wake_up(&cntl_socket->read_wait_q);
+	wake_up_interruptible(&cntl_socket->read_wait_q);
+	DIAGFWD_DBUG("waking up read wait queue for instance %d svcid %d\n",cntl_socket->ins_id,cntl_socket->svc_id);
 	queue_work(cntl_socket->wq, &(cntl_socket->read_work));
 }
 
@@ -317,13 +324,13 @@ static void __socket_open_channel(struct diag_socket_info *info)
 		return;
 
 	if (!info->inited) {
-		DIAGFWD_DBUG("diag: In %s, socket %s is not initialized\n",
+		DIAGSOCKET_ERR("diag: In %s, socket %s is not initialized\n",
 			 __func__, info->name);
 		return;
 	}
 
 	if (atomic_read(&info->opened)) {
-		DIAGFWD_DBUG("diag: In %s, socket %s already opened\n",
+		DIAGSOCKET_ERR("diag: In %s, socket %s already opened\n",
 			 __func__, info->name);
 		return;
 	}
@@ -434,10 +441,8 @@ static void __socket_close_channel(struct diag_socket_info *info)
 	if (!atomic_read(&info->opened))
 		return;
 
-	if (!cntl_socket)
-		return;
-
-	wake_up(&cntl_socket->read_wait_q);
+	if (cntl_socket)
+		wake_up(&cntl_socket->read_wait_q);
 	wake_up(&info->read_wait_q);
 
 	memset(&info->remote_addr, 0, sizeof(struct sockaddr_msm_ipc));
@@ -453,9 +458,9 @@ static void __socket_close_channel(struct diag_socket_info *info)
 		write_unlock_bh(&info->hdl->sk->sk_callback_lock);
 		sock_release(info->hdl);
 		info->hdl = NULL;
-		wake_up(&info->read_wait_q);
+		wake_up_interruptible(&info->read_wait_q);
 	}
-	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "%s exiting\n", info->name);
+	DIAGSOCKET_INFO("%s exiting\n", info->name);
 
 	return;
 }
@@ -578,8 +583,10 @@ static void cntl_socket_read_work_fn(struct work_struct *work)
 	if (!cntl_socket)
 		return;
 
-	wait_event(cntl_socket->read_wait_q,
-		   (atomic_read(&cntl_socket->data_ready) > 0));
+	ret = wait_event_interruptible(cntl_socket->read_wait_q,
+				(atomic_read(&cntl_socket->data_ready) > 0));
+	if (ret)
+		return;
 
 	do {
 		iov.iov_base = &msg;
@@ -621,6 +628,11 @@ static void socket_read_work_fn(struct work_struct *work)
 	if (!info)
 		return;
 
+	DIAGFWD_DBUG("calling fwd channel read for svc id %d ins %d\n",info->svc_id,info->ins_id);
+
+	if (!atomic_read(&info->opened) && info->port_type == PORT_TYPE_SERVER)
+		diagfwd_buffers_init(info->fwd_ctxt);
+
 	diagfwd_channel_read(info->fwd_ctxt);
 }
 
@@ -628,12 +640,17 @@ static void diag_socket_queue_read(void *ctxt)
 {
 	struct diag_socket_info *info = NULL;
 
-	if (!ctxt)
+	if (!ctxt) {
+		DIAGFWD_DBUG("context invalid\n");
 		return;
+	}
 
 	info = (struct diag_socket_info *)ctxt;
-	if (info->hdl && info->wq)
+	DIAGFWD_DBUG("about to queue read for instance %d svc %d \n",info->ins_id,info->svc_id);
+	if (info->hdl && info->wq) {
+		DIAGFWD_DBUG("queued work function in socket queue read for instance %d svc %d \n",info->ins_id,info->svc_id);
 		queue_work(info->wq, &(info->read_work));
+	}
 }
 
 void diag_socket_invalidate(void *ctxt, struct diagfwd_info *fwd_ctxt)
@@ -645,6 +662,17 @@ void diag_socket_invalidate(void *ctxt, struct diagfwd_info *fwd_ctxt)
 
 	info = (struct diag_socket_info *)ctxt;
 	info->fwd_ctxt = fwd_ctxt;
+}
+
+int diag_socket_check_state(void *ctxt)
+{
+	struct diag_socket_info *info = NULL;
+
+	if (!ctxt)
+		return 0;
+
+	info = (struct diag_socket_info *)ctxt;
+	return (int)(atomic_read(&info->diag_state));
 }
 
 static void __diag_socket_init(struct diag_socket_info *info)
@@ -869,20 +897,29 @@ static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len)
 	temp = buf;
 	bytes_remaining = buf_len;
 
-	wait_event(info->read_wait_q, (info->data_ready > 0) || (!info->hdl) ||
-		   (atomic_read(&info->diag_state) == 0));
+	DIAGFWD_DBUG("wait event interruptible for instance %d svc %d ",info->ins_id,info->svc_id);
+
+	err = wait_event_interruptible(info->read_wait_q,
+				      (info->data_ready > 0) || (!info->hdl) ||
+				      (atomic_read(&info->diag_state) == 0));
+	if (err) {
+		mutex_lock(&driver->diagfwd_channel_mutex);
+		diagfwd_channel_read_done(info->fwd_ctxt, buf, 0);
+		mutex_unlock(&driver->diagfwd_channel_mutex);
+		return -ERESTARTSYS;
+	}
 
 	if (atomic_read(&info->diag_state) == 0) {
-		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
-			 "%s closing read thread. diag state is closed\n",
+		DIAGSOCKET_ERR("%s closing read thread. diag state is closed\n",
 			 info->name);
-		diag_ws_release();
+		mutex_lock(&driver->diagfwd_channel_mutex);
+		diagfwd_channel_read_done(info->fwd_ctxt, buf, 0);
+		mutex_unlock(&driver->diagfwd_channel_mutex);
 		return 0;
 	}
 
 	if (!info->hdl) {
-		DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "%s closing read thread\n",
-			 info->name);
+		DIAGSOCKET_ERR("%s closing read thread\n",info->name);
 		goto fail;
 	}
 
@@ -892,6 +929,7 @@ static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len)
 		iov.iov_len = bytes_remaining;
 		read_msg.msg_name = &src_addr;
 		read_msg.msg_namelen = sizeof(src_addr);
+		DIAGFWD_DBUG("reading data for instance %d svc %d ",info->ins_id,info->svc_id);
 
 		pkt_len = kernel_recvmsg(info->hdl, &read_msg, &iov, 1, 0,
 					 MSG_PEEK);
@@ -911,6 +949,8 @@ static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len)
 					  pkt_len, 0);
 		if (read_len <= 0)
 			goto fail;
+
+		DIAGFWD_DBUG("completed reading data for instance %d svc %d ",info->ins_id,info->svc_id);
 
 		if (!atomic_read(&info->opened) &&
 		    info->port_type == PORT_TYPE_SERVER) {
@@ -936,23 +976,31 @@ static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len)
 		err = queue_work(info->wq, &(info->read_work));
 
 	if (total_recd > 0) {
-		DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "%s read total bytes: %d\n",
+		DIAGSOCKET_DBUG("%s read total bytes: %d\n",
 			 info->name, total_recd);
+		mutex_lock(&driver->diagfwd_channel_mutex);
 		err = diagfwd_channel_read_done(info->fwd_ctxt,
 						buf, total_recd);
-		if (err)
+		mutex_unlock(&driver->diagfwd_channel_mutex);
+		if (err) {
+			DIAGFWD_DBUG("%s failed read done read total bytes: %d err%d\n", info->name, total_recd, err);
 			goto fail;
+		}
 	} else {
-		DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "%s error in read, err: %d\n",
+		DIAGSOCKET_DBUG("%s error in read, err: %d\n",
 			 info->name, total_recd);
 		goto fail;
 	}
+	DIAGFWD_DBUG("%s queuing socket read total bytes: %d\n",info->name, total_recd);
 
 	diag_socket_queue_read(info);
 	return 0;
 
 fail:
+	DIAGFWD_DBUG("%s calling channel read done in fail case with len zero: %d\n", info->name, total_recd);
+	mutex_lock(&driver->diagfwd_channel_mutex);
 	diagfwd_channel_read_done(info->fwd_ctxt, buf, 0);
+	mutex_unlock(&driver->diagfwd_channel_mutex);
 	return -EIO;
 }
 
@@ -989,7 +1037,7 @@ static int diag_socket_write(void *ctxt, unsigned char *buf, int len)
 				   __func__, info->name, len, write_len);
 	}
 
-	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "%s wrote to socket, len: %d\n",
+	DIAGSOCKET_DBUG("%s wrote to socket, len: %d\n",
 		 info->name, write_len);
 
 	return err;

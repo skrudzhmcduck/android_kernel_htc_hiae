@@ -27,8 +27,7 @@
 struct rpm_version {
 	uint8_t build;
 	uint8_t minor;
-	uint8_t major;
-	uint8_t reserved;
+	uint16_t major;
 };
 
 struct drv_data {

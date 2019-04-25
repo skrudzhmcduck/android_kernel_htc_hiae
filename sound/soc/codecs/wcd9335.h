@@ -25,7 +25,12 @@
 #define TASHA_SB_PGD_PORT_RX_BASE   0x40
 #define TASHA_SB_PGD_PORT_TX_BASE   0x50
 
-#define TASHA_ZDET_SUPPORTED true
+#define TASHA_ZDET_SUPPORTED false
+#define TASHA_ZDET_VAL_32	32000
+#define TASHA_ZDET_VAL_400	400000
+#define TASHA_ZDET_VAL_1200	1200000
+#define TASHA_ZDET_VAL_100K	100000000
+#define TASHA_ZDET_FLOATING_IMPEDANCE 0x0FFFFFFE
 
 #define WCD9335_DMIC_CLK_DIV_2  0x0
 #define WCD9335_DMIC_CLK_DIV_3  0x1
@@ -37,7 +42,6 @@
 #define WCD9335_ANC_DMIC_X2_FULL_RATE 1
 #define WCD9335_ANC_DMIC_X2_HALF_RATE 0
 
-/* Number of input and output Slimbus port */
 enum {
 	TASHA_RX0 = 0,
 	TASHA_RX1,
@@ -79,10 +83,16 @@ enum wcd9335_codec_event {
 	WCD9335_CODEC_EVENT_CODEC_UP = 0,
 };
 
-/* Dai data structure holds the
- * dai specific info like rate,
- * channel number etc.
- */
+enum tasha_on_demand_supply {
+	ON_DEMAND_MICBIAS = 0,
+	ON_DEMAND_SUPPLIES_MAX,
+};
+
+struct on_demand_supply {
+	struct regulator *supply;
+	int ondemand_supply_count;
+};
+
 struct tasha_codec_dai_data {
 	u32 rate;
 	u32 *ch_num;
@@ -90,13 +100,20 @@ struct tasha_codec_dai_data {
 	u32 ch_tot;
 };
 
-/* Structure used to update codec
- * register defaults after reset
- */
 struct tasha_reg_mask_val {
 	u16 reg;
 	u8 mask;
 	u8 val;
+};
+
+enum {
+	SPKR_MODE_DEFAULT,
+	SPKR_MODE_1,          
+};
+
+enum {
+	RX_GAIN_OFFSET_M1P5_DB,
+	RX_GAIN_OFFSET_0_DB,
 };
 
 extern void *tasha_get_afe_config(struct snd_soc_codec *codec,
@@ -117,4 +134,9 @@ extern void tasha_event_register(
 	struct snd_soc_codec *codec);
 extern int tasha_codec_info_create_codec_entry(struct snd_info_entry *,
 					       struct snd_soc_codec *);
+extern int tasha_codec_enable_standalone_micbias(struct snd_soc_codec *codec,
+						int micb_num,
+						bool enable);
+extern int tasha_set_spkr_mode(struct snd_soc_codec *codec, int mode);
+extern int tasha_set_spkr_gain_offset(struct snd_soc_codec *codec, int offset);
 #endif

@@ -107,8 +107,9 @@ static ssize_t htc_debug_write(struct file *file, const char __user *buffer,
 
     SECMSG("%s called (count:%d)\n", __func__, (int)count);
 
-    if (count != sizeof(buf)){
-        printk(KERN_ERR"count != sizeof(buf)\n");
+    if ((count != FLAG_LEN + 2) && (count != FLAG_LEN + 3)) {
+        
+        printk(KERN_ERR"unexpected size of flag\n");
         return -EFAULT;
     }
 

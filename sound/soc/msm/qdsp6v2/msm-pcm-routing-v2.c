@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -75,6 +75,10 @@ static int msm_route_ext_ec_ref[MAX_VOC_SESSIONS] = { AFE_PORT_INVALID };
 static bool is_custom_stereo_on = false; 
 static bool is_ds2_on = false; 
 
+static ushort usSetEffectBit = 0x0;
+extern int htc_adaptivesound_enable;
+extern int htc_onedotone_enable;
+
 enum {
 	MADNONE,
 	MADAUDIO,
@@ -112,6 +116,20 @@ static struct msm_pcm_route_bdai_pp_params
 
 static int msm_routing_send_device_pp_params(int port_id,  int copp_idx);
 
+static int msm_routing_get_bit_width(unsigned int format) {
+	int bit_width;
+	switch (format) {
+	case SNDRV_PCM_FORMAT_S24_LE:
+	case SNDRV_PCM_FORMAT_S24_3LE:
+		bit_width = 24;
+		break;
+	case SNDRV_PCM_FORMAT_S16_LE:
+	default:
+		bit_width = 16;
+	}
+	return bit_width;
+}
+
 static void msm_pcm_routing_cfg_pp(int port_id, int copp_idx, int topology,
 				   int channels)
 {
@@ -132,6 +150,8 @@ static void msm_pcm_routing_cfg_pp(int port_id, int copp_idx, int topology,
 				is_custom_stereo_on, rc);
 		break;
 	case DOLBY_ADM_COPP_TOPOLOGY_ID:
+	case HTC_ONEDOTONE_DOLBY_ADM_COPP_TOPOLOGY_ID:
+	case HTC_ADAPTIVE_DOLBY_ADM_COPP_TOPOLOGY_ID:
 		if (is_ds2_on) {
 			pr_debug("%s: DS2_ADM_COPP_TOPOLOGY\n", __func__);
 			rc = msm_ds2_dap_init(port_id, copp_idx, channels,
@@ -175,6 +195,8 @@ static void msm_pcm_routing_deinit_pp(int port_id, int topology)
 		msm_ds2_dap_deinit(port_id);
 		break;
 	case DOLBY_ADM_COPP_TOPOLOGY_ID:
+	case HTC_ONEDOTONE_DOLBY_ADM_COPP_TOPOLOGY_ID:
+	case HTC_ADAPTIVE_DOLBY_ADM_COPP_TOPOLOGY_ID:
 		if (is_ds2_on) {
 			pr_debug("%s: DS2_ADM_COPP_TOPOLOGY_ID\n", __func__);
 			msm_ds2_dap_deinit(port_id);
@@ -347,6 +369,7 @@ static unsigned long session_copp_map[MSM_FRONTEND_DAI_MM_SIZE][2]
 static struct msm_pcm_routing_app_type_data app_type_cfg[MAX_APP_TYPES];
 static struct msm_pcm_stream_app_type_cfg
 			 fe_dai_app_type_cfg[MSM_FRONTEND_DAI_MM_SIZE];
+static struct htc_adm_effect_s htc_adm_effect[HTC_ADM_EFFECT_MAX];
 int msm_pcm_routing_get_port(struct snd_pcm_substream *substream, u16 *port_id)
 {
 	int cnt = 0, i;
@@ -513,6 +536,163 @@ done:
 	return topology;
 }
 
+ushort get_adm_custom_effect_status()
+{
+    ushort usEffect = 0;
+
+    mutex_lock(&routing_lock);
+    usEffect = usSetEffectBit;
+    pr_info("%s: usSetEffectBit is 0x%x\n", __func__, usSetEffectBit);
+    mutex_unlock(&routing_lock);
+
+    return usEffect;
+}
+
+static int msm_routing_send_htc_adm_params(u16 port_id, int copp_idx, int perf_mode, int path_type)
+{
+	int i = 0, fe_idx = -1, be_idx = -1, copp_topo_id = 0;
+	int ret = -1;
+
+	if (perf_mode != LEGACY_PCM_MODE) 
+		return ret;
+
+	for (i = 0; i < MSM_BACKEND_DAI_MAX; i++) {
+		if (msm_bedais[i].port_id == port_id && msm_bedais[i].active) {
+			be_idx = i;
+			break;
+		}
+	}
+	usSetEffectBit = 0x0;
+
+	for (i = 0; i < HTC_ADM_EFFECT_MAX; i++) {
+		if (htc_adm_effect[i].used) {
+			if (be_idx >= 0 && be_idx < MSM_BACKEND_DAI_MAX) {
+				for_each_set_bit(fe_idx, &msm_bedais[be_idx].fe_sessions, MSM_FRONTEND_DAI_MM_SIZE) {
+					copp_topo_id = msm_routing_get_adm_topology(path_type, fe_idx);
+					pr_err("%s: fe_idx=%d, be_idx=%d, topo_id=0x%x\n",
+						__func__, fe_idx, be_idx, copp_topo_id);
+					if (htc_adm_effect[i].port_id == port_id &&
+							htc_adm_effect[i].copp_id == copp_topo_id) {
+						ret = q6adm_enable_effect(port_id, copp_idx,
+								htc_adm_effect[i].payload_size, htc_adm_effect[i].payload);
+						if (ret < 0) {
+							pr_err("%s: set copp_idx 0x%x fail\n", __func__, copp_idx);
+							return ret;
+						} else {
+							if (i == HTC_ADM_EFFECT_ADAPTIVEAUDIO_DATA1 ||
+							    i == HTC_ADM_EFFECT_ADAPTIVEAUDIO_DATA2) {
+								pr_info("%s: effect[%d] htc_adaptivesound_enable=%d\n",
+									__func__, i, htc_adaptivesound_enable);
+								if (htc_adaptivesound_enable)
+									usSetEffectBit |= 0x1 << i;
+							} else if (i == HTC_ADM_EFFECT_ONEDOTONE) {
+								pr_info("%s: effect[%d] htc_onedotone_enable=%d\n",
+									__func__, i, htc_onedotone_enable);
+								if (htc_onedotone_enable)
+									usSetEffectBit |= 0x1 << i;
+							} else {
+								usSetEffectBit |= 0x1 << i;
+							}
+							pr_info("%s: apply effect[%d], usSetEffectBit=0x%x\n", __func__, i, usSetEffectBit);
+						}
+					}
+				}
+			} else {
+				return ret;
+			}
+		}
+	}
+
+	return ret;
+}
+
+int htc_adm_effect_control(enum HTC_ADM_EFFECT_ID effect_id, u16 port_id, uint32_t copp_id,
+		uint32_t payload_size, void *payload )
+{
+	int be_idx = -1, copp_idx = 0, copp_topo_id = 0;
+	int i = 0, ret = -1;
+
+	mutex_lock(&routing_lock);
+
+	if (htc_adm_effect[effect_id].used) {
+		kfree(htc_adm_effect[effect_id].payload);
+		htc_adm_effect[effect_id].used = 0;
+	}
+
+	htc_adm_effect[effect_id].payload = kzalloc(payload_size, GFP_KERNEL);
+
+	if (htc_adm_effect[effect_id].payload) {
+		memcpy(htc_adm_effect[effect_id].payload, payload, payload_size);
+		htc_adm_effect[effect_id].payload_size = payload_size;
+		htc_adm_effect[effect_id].port_id = port_id;
+		htc_adm_effect[effect_id].copp_id = copp_id;
+		htc_adm_effect[effect_id].used = 1;
+	}
+
+	for (i = 0; i < MSM_BACKEND_DAI_MAX; i++) {
+		if (msm_bedais[i].port_id == port_id && msm_bedais[i].active) {
+			be_idx = i;
+			break;
+		}
+	}
+
+	if (be_idx >= 0 && be_idx < MSM_BACKEND_DAI_MAX) {
+		for_each_set_bit(i, &msm_bedais[be_idx].fe_sessions,
+				MSM_FRONTEND_DAI_MM_SIZE) {
+
+			if (fe_dai_map[i][SESSION_TYPE_RX].perf_mode != LEGACY_PCM_MODE) 
+				continue;
+
+			for (copp_idx = 0; copp_idx < MAX_COPPS_PER_PORT; copp_idx++) {
+				unsigned long copp =
+					session_copp_map[i]
+					[SESSION_TYPE_RX][be_idx];
+
+				if (test_bit(copp_idx, &copp)) {
+					copp_topo_id = msm_routing_get_adm_topology(ADM_PATH_PLAYBACK, i);
+					pr_info("%s: apply fe %d copp_idx 0x%x, copp_topo_id=0x%x effect_copp_id=0x%x\n",
+						__func__, i, copp_idx, copp_topo_id, htc_adm_effect[effect_id].copp_id);
+					if (htc_adm_effect[effect_id].copp_id == copp_topo_id) {
+						ret = q6adm_enable_effect(port_id, copp_idx, payload_size, payload);
+
+						if (ret < 0) {
+							pr_err("%s: set fe %d copp_id 0x%x fail\n",__func__, i, copp_id);
+							mutex_unlock(&routing_lock);
+							return ret;
+						} else {
+							if (effect_id == HTC_ADM_EFFECT_ADAPTIVEAUDIO_DATA1 ||
+							    effect_id == HTC_ADM_EFFECT_ADAPTIVEAUDIO_DATA2) {
+								pr_info("%s: effect[%d] htc_adaptivesound_enable=%d\n",
+									__func__, effect_id, htc_adaptivesound_enable);
+								if (htc_adaptivesound_enable)
+									usSetEffectBit |= 0x1 << effect_id;
+								else
+									usSetEffectBit &= ~(0x1 << effect_id);
+							} else if (effect_id == HTC_ADM_EFFECT_ONEDOTONE) {
+								pr_info("%s: effect[%d] htc_onedotone_enable=%d\n",
+									__func__, effect_id, htc_onedotone_enable);
+								if (htc_onedotone_enable)
+									usSetEffectBit |= 0x1 << effect_id;
+								else
+									usSetEffectBit &= ~(0x1 << effect_id);
+							} else {
+								usSetEffectBit |= 0x1 << effect_id;
+							}
+
+							pr_info("%s: apply effect[%d], usSetEffectBit=0x%x\n", __func__, effect_id, usSetEffectBit);
+						}
+					}
+				}
+			}
+		}
+	} else {
+		pr_err("%s:port id 0x%x is not active or found\n", __func__, port_id);
+	}
+
+	mutex_unlock(&routing_lock);
+	return ret;
+}
+
 static uint8_t is_be_dai_extproc(int be_dai)
 {
 	if (be_dai == MSM_BACKEND_DAI_EXTPROC_RX ||
@@ -559,6 +739,9 @@ static void msm_pcm_routing_build_matrix(int fedai_id, int sess_type,
 		payload.sample_rate = fe_dai_app_type_cfg[fedai_id].sample_rate;
 		adm_matrix_map(path_type, payload, perf_mode);
 		msm_pcm_routng_cfg_matrix_map_pp(payload, path_type, perf_mode);
+	}
+	for (i = 0; i < num_copps; i++) {
+		msm_routing_send_htc_adm_params(payload.port_id[i], payload.copp_idx[i], perf_mode, path_type);
 	}
 }
 
@@ -654,11 +837,7 @@ int msm_pcm_routing_reg_phy_compr_stream(int fe_id, int perf_mode,
 			int app_type, app_type_idx, copp_idx, acdb_dev_id;
 			channels = msm_bedais[i].channel;
 
-			if (msm_bedais[i].format == SNDRV_PCM_FORMAT_S16_LE)
-				bit_width = 16;
-			else if (msm_bedais[i].format ==
-					SNDRV_PCM_FORMAT_S24_LE)
-				bit_width = 24;
+			bit_width = msm_routing_get_bit_width(msm_bedais[i].format);
 			app_type = (stream_type == SNDRV_PCM_STREAM_PLAYBACK) ?
 				   fe_dai_app_type_cfg[fe_id].app_type : 0;
 			if (app_type) {
@@ -715,6 +894,9 @@ int msm_pcm_routing_reg_phy_compr_stream(int fe_id, int perf_mode,
 		payload.acdb_dev_id = fe_dai_app_type_cfg[fe_id].acdb_dev_id;
 		adm_matrix_map(path_type, payload, perf_mode);
 		msm_pcm_routng_cfg_matrix_map_pp(payload, path_type, perf_mode);
+		for (i = 0; i < num_copps; i++) {
+			msm_routing_send_htc_adm_params(payload.port_id[i], payload.copp_idx[i], perf_mode, path_type);
+		}
 	}
 	mutex_unlock(&routing_lock);
 	return 0;
@@ -761,11 +943,7 @@ int msm_pcm_routing_reg_phy_stream(int fedai_id, int perf_mode,
 			channels = msm_bedais[i].channel;
 			msm_bedais[i].compr_passthr_mode =
 				LEGACY_PCM;
-			if (msm_bedais[i].format == SNDRV_PCM_FORMAT_S16_LE)
-				bits_per_sample = 16;
-			else if (msm_bedais[i].format ==
-						SNDRV_PCM_FORMAT_S24_LE)
-				bits_per_sample = 24;
+			bits_per_sample = msm_routing_get_bit_width(msm_bedais[i].format);
 
 			app_type = (stream_type == SNDRV_PCM_STREAM_PLAYBACK) ?
 				   fe_dai_app_type_cfg[fedai_id].app_type : 0;
@@ -824,6 +1002,9 @@ int msm_pcm_routing_reg_phy_stream(int fedai_id, int perf_mode,
 		payload.sample_rate = fe_dai_app_type_cfg[fedai_id].sample_rate;
 		adm_matrix_map(path_type, payload, perf_mode);
 		msm_pcm_routng_cfg_matrix_map_pp(payload, path_type, perf_mode);
+		for (i = 0; i < num_copps; i++) {
+			msm_routing_send_htc_adm_params(payload.port_id[i], payload.copp_idx[i], perf_mode, path_type);
+		}
 	}
 	mutex_unlock(&routing_lock);
 	return 0;
@@ -895,6 +1076,8 @@ void msm_pcm_routing_dereg_phy_stream(int fedai_id, int stream_type)
 			clear_bit(idx,
 				  &session_copp_map[fedai_id][session_type][i]);
 			if ((DOLBY_ADM_COPP_TOPOLOGY_ID == topology ||
+				HTC_ADAPTIVE_DOLBY_ADM_COPP_TOPOLOGY_ID == topology ||
+				HTC_ONEDOTONE_DOLBY_ADM_COPP_TOPOLOGY_ID == topology ||
 				DS2_ADM_COPP_TOPOLOGY_ID == topology) &&
 			    (fdai->perf_mode == LEGACY_PCM_MODE) &&
 			    (msm_bedais[i].compr_passthr_mode ==
@@ -976,8 +1159,7 @@ static void msm_pcm_routing_process_audio(u16 reg, u16 val, int set)
 						fdai->event_info.priv_data);
 				fdai->be_srate = 0; 
 			}
-			if (msm_bedais[reg].format == SNDRV_PCM_FORMAT_S24_LE)
-				bits_per_sample = 24;
+			bits_per_sample =  msm_routing_get_bit_width(msm_bedais[reg].format);
 
 			app_type = (session_type == SESSION_TYPE_RX) ?
 				   fe_dai_app_type_cfg[val].app_type : 0;
@@ -1052,6 +1234,8 @@ static void msm_pcm_routing_process_audio(u16 reg, u16 val, int set)
 			clear_bit(idx,
 				  &session_copp_map[val][session_type][reg]);
 			if ((DOLBY_ADM_COPP_TOPOLOGY_ID == topology ||
+				HTC_ADAPTIVE_DOLBY_ADM_COPP_TOPOLOGY_ID == topology ||
+				HTC_ONEDOTONE_DOLBY_ADM_COPP_TOPOLOGY_ID == topology ||
 				DS2_ADM_COPP_TOPOLOGY_ID == topology) &&
 			    (fdai->perf_mode == LEGACY_PCM_MODE) &&
 			    (msm_bedais[reg].compr_passthr_mode ==
@@ -1095,7 +1279,6 @@ static int msm_routing_put_audio_mixer(struct snd_kcontrol *kcontrol,
 	struct snd_soc_dapm_widget *widget = wlist->widgets[0];
 	struct soc_mixer_control *mc =
 		(struct soc_mixer_control *)kcontrol->private_value;
-
 
 	if (ucontrol->value.integer.value[0] &&
 	   msm_pcm_routing_route_is_set(mc->reg, mc->shift) == false) {
@@ -1574,6 +1757,11 @@ static int msm_routing_ec_ref_rx_put(struct snd_kcontrol *kcontrol,
 	int mux = ucontrol->value.enumerated.item[0];
 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
 
+	if (mux >= e->max) {
+		pr_err("%s: Invalid mux value %d\n", __func__, mux);
+		return -EINVAL;
+	}
+
 	mutex_lock(&routing_lock);
 	switch (ucontrol->value.integer.value[0]) {
 	case 0:
@@ -1719,6 +1907,11 @@ static int msm_routing_ext_ec_put(struct snd_kcontrol *kcontrol,
 
 	u32 session_id = 0;
 	int voc_idx = 0;
+
+	if (mux >= e->max) {
+		pr_err("%s: Invalid mux value %d\n", __func__, mux);
+		return -EINVAL;
+	}
 
 	if (e->reg == MSM_FRONTEND_DAI_CS_VOICE)
 		session_id = voc_get_session_id(VOICE_SESSION_NAME);
@@ -3267,6 +3460,12 @@ static const struct snd_kcontrol_new quin_mi2s_rx_voice_mixer_controls[] = {
 	SOC_SINGLE_EXT("QCHAT", MSM_BACKEND_DAI_QUINARY_MI2S_RX,
 	MSM_FRONTEND_DAI_QCHAT, 1, 0, msm_routing_get_voice_mixer,
 	msm_routing_put_voice_mixer),
+	SOC_SINGLE_EXT("VoiceMMode1", MSM_BACKEND_DAI_QUINARY_MI2S_RX,
+	MSM_FRONTEND_DAI_VOICEMMODE1, 1, 0, msm_routing_get_voice_mixer,
+	msm_routing_put_voice_mixer),
+	SOC_SINGLE_EXT("VoiceMMode2", MSM_BACKEND_DAI_QUINARY_MI2S_RX,
+	MSM_FRONTEND_DAI_VOICEMMODE2, 1, 0, msm_routing_get_voice_mixer,
+	msm_routing_put_voice_mixer),
 };
 
 static const struct snd_kcontrol_new afe_pcm_rx_voice_mixer_controls[] = {
@@ -4170,7 +4369,10 @@ static int msm_routing_put_stereo_to_custom_stereo_control(
 					rc = msm_ds2_dap_set_custom_stereo_onoff
 						(msm_bedais[be_index].port_id,
 						idx, is_custom_stereo_on);
-				else if (topo_id == DOLBY_ADM_COPP_TOPOLOGY_ID)
+				else if (topo_id == DOLBY_ADM_COPP_TOPOLOGY_ID
+					|| topo_id == HTC_ONEDOTONE_DOLBY_ADM_COPP_TOPOLOGY_ID
+					|| topo_id == HTC_ADAPTIVE_DOLBY_ADM_COPP_TOPOLOGY_ID
+					)
 					rc = dolby_dap_set_custom_stereo_onoff(
 						msm_bedais[be_index].port_id,
 						idx, is_custom_stereo_on);
@@ -4901,6 +5103,9 @@ static const struct snd_soc_dapm_widget msm_qdsp6_widgets[] = {
 		0, 0, 0, 0),
 	SND_SOC_DAPM_AIF_IN("QUAT_MI2S_DL_HL",
 		"Quaternary MI2S_RX Hostless Playback",
+		0, 0, 0, 0),
+	SND_SOC_DAPM_AIF_IN("QUIN_MI2S_RX_DL_HL",
+		"Quinary MI2S_RX Hostless Playback",
 		0, 0, 0, 0),
 	SND_SOC_DAPM_AIF_OUT("QUIN_MI2S_UL_HL",
 		"Quinary MI2S_TX Hostless Capture",
@@ -5882,6 +6087,8 @@ static const struct snd_soc_dapm_route intercon[] = {
 	{"QUIN_MI2S_RX_Voice Mixer", "Voice Stub", "VOICE_STUB_DL"},
 	{"QUIN_MI2S_RX_Voice Mixer", "Voice2 Stub", "VOICE2_STUB_DL"},
 	{"QUIN_MI2S_RX_Voice Mixer", "QCHAT", "QCHAT_DL"},
+	{"QUIN_MI2S_RX_Voice Mixer", "VoiceMMode1", "VOICEMMODE1_DL"},
+	{"QUIN_MI2S_RX_Voice Mixer", "VoiceMMode2", "VOICEMMODE2_DL"},
 	{"QUIN_MI2S_RX", NULL, "QUIN_MI2S_RX_Voice Mixer"},
 	{"VOC_EXT_EC MUX", "PRI_MI2S_TX" , "PRI_MI2S_TX"},
 	{"VOC_EXT_EC MUX", "SEC_MI2S_TX" , "SEC_MI2S_TX"},
@@ -6054,6 +6261,7 @@ static const struct snd_soc_dapm_route intercon[] = {
 	{"Voip_Tx Mixer", "PRI_MI2S_TX_Voip", "PRI_MI2S_TX"},
 	{"VOIP_UL", NULL, "Voip_Tx Mixer"},
 	{"QUIN_MI2S_DL_HL", "Switch", "SLIM0_DL_HL"},
+	{"QUIN_MI2S_DL_HL", "Switch", "QUIN_MI2S_RX_DL_HL"},
 	{"QUIN_MI2S_RX", NULL, "QUIN_MI2S_DL_HL"},
 
 	{"QUIN_MI2S_RX Port Mixer", "SLIM_0_TX", "SLIMBUS_0_TX"},

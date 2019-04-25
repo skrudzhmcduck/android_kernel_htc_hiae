@@ -856,6 +856,7 @@ static unsigned int a4xx_register_offsets[ADRENO_REG_REGISTER_MAX] = {
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_MEQ_DATA, A4XX_CP_MEQ_DATA),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_HW_FAULT, A4XX_CP_HW_FAULT),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_PROTECT_STATUS, A4XX_CP_PROTECT_STATUS),
+	ADRENO_REG_DEFINE(ADRENO_REG_CP_SCRATCH_REG0, A4XX_CP_SCRATCH_REG0),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_SCRATCH_REG6, A4XX_CP_SCRATCH_REG6),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_SCRATCH_REG7, A4XX_CP_SCRATCH_REG7),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_PREEMPT, A4XX_CP_PREEMPT),
@@ -1343,7 +1344,7 @@ static void a4xx_perfcounter_init(struct adreno_device *adreno_dev)
 		 * are swizzled so only a subset of them are usable
 		 */
 
-		if (counters != 0) {
+		if (counters != NULL) {
 			counters->groups[KGSL_PERFCOUNTER_GROUP_CP].regs =
 				a420_perfcounters_cp;
 			counters->groups[KGSL_PERFCOUNTER_GROUP_CP].reg_count =

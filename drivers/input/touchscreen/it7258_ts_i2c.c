@@ -46,57 +46,33 @@
 	((x)[1] < (y)->data[(y)->size - 7]) || \
 	((x)[2] < (y)->data[(y)->size - 6]) || \
 	((x)[3] < (y)->data[(y)->size - 5]))
-<<<<<<< HEAD
-=======
 #define IT7260_COORDS_ARR_SIZE		4
->>>>>>> qct_m_rel_es0
 
-/* all commands writes go to this idx */
 #define BUF_COMMAND			0x20
 #define BUF_SYS_COMMAND			0x40
-/*
- * "device ready?" and "wake up please" and "read touch data" reads
- * go to this idx
- */
 #define BUF_QUERY			0x80
-/* most command response reads go to this idx */
 #define BUF_RESPONSE			0xA0
 #define BUF_SYS_RESPONSE		0xC0
-/* reads of "point" go through here and produce 14 bytes of data */
 #define BUF_POINT_INFO			0xE0
 
-/*
- * commands and their subcommands. when no subcommands exist, a zero
- * is send as the second byte
- */
 #define CMD_IDENT_CHIP			0x00
-/* VERSION_LENGTH bytes of data in response */
 #define CMD_READ_VERSIONS		0x01
 #define SUB_CMD_READ_FIRMWARE_VERSION	0x00
 #define SUB_CMD_READ_CONFIG_VERSION	0x06
 #define VERSION_LENGTH			10
-/* subcommand is zero, next byte is power mode */
 #define CMD_PWR_CTL			0x04
-/* active mode */
 #define PWR_CTL_ACTIVE_MODE		0x00
-/* idle mode */
 #define PWR_CTL_LOW_POWER_MODE		0x01
-/* sleep mode */
 #define PWR_CTL_SLEEP_MODE		0x02
 #define WAIT_CHANGE_MODE		20
-/* command is not documented in the datasheet v1.0.0.7 */
 #define CMD_UNKNOWN_7			0x07
 #define CMD_FIRMWARE_REINIT_C		0x0C
-/* needs to be followed by 4 bytes of zeroes */
 #define CMD_CALIBRATE			0x13
 #define CMD_FIRMWARE_UPGRADE		0x60
 #define SUB_CMD_ENTER_FW_UPGRADE_MODE	0x00
 #define SUB_CMD_EXIT_FW_UPGRADE_MODE	0x80
-/* address for FW read/write */
 #define CMD_SET_START_OFFSET		0x61
-/* subcommand is number of bytes to write */
 #define CMD_FW_WRITE			0x62
-/* subcommand is number of bytes to read */
 #define CMD_FW_READ			0x63
 #define CMD_FIRMWARE_REINIT_6F		0x6F
 
@@ -105,7 +81,6 @@
 #define CHIP_FLASH_SIZE			0x8000
 #define DEVICE_READY_MAX_WAIT		500
 
-/* result of reading with BUF_QUERY bits */
 #define CMD_STATUS_BITS			0x07
 #define CMD_STATUS_DONE			0x00
 #define CMD_STATUS_BUSY			0x01
@@ -113,13 +88,10 @@
 #define PT_INFO_BITS			0xF8
 #define BT_INFO_NONE			0x00
 #define PT_INFO_YES			0x80
-/* no new data but finder(s) still down */
 #define BT_INFO_NONE_BUT_DOWN		0x08
 
 #define PD_FLAGS_DATA_TYPE_BITS		0xF0
-/* other types (like chip-detected gestures) exist but we do not care */
 #define PD_FLAGS_DATA_TYPE_TOUCH	0x00
-/* a bit for each finger data that is valid (from lsb to msb) */
 #define PD_FLAGS_HAVE_FINGERS		0x07
 #define PD_PALM_FLAG_BIT		0x01
 #define FD_PRESSURE_BITS		0x0F
@@ -154,8 +126,6 @@ struct IT7260_ts_platform_data {
 	u16 palm_detect_keycode;
 	const char *fw_name;
 	const char *cfg_name;
-<<<<<<< HEAD
-=======
 	unsigned int panel_minx;
 	unsigned int panel_miny;
 	unsigned int panel_maxx;
@@ -165,7 +135,6 @@ struct IT7260_ts_platform_data {
 	unsigned int disp_maxx;
 	unsigned int disp_maxy;
 	unsigned num_of_fingers;
->>>>>>> qct_m_rel_es0
 };
 
 struct IT7260_ts_data {
@@ -193,7 +162,6 @@ struct IT7260_ts_data {
 	struct dentry *dir;
 };
 
-/* Function declarations */
 static int fb_notifier_callback(struct notifier_block *self,
 			unsigned long event, void *data);
 static int IT7260_ts_resume(struct device *dev);
@@ -221,7 +189,6 @@ static int IT7260_debug_suspend_get(void *_data, u64 *val)
 DEFINE_SIMPLE_ATTRIBUTE(debug_suspend_fops, IT7260_debug_suspend_get,
 				IT7260_debug_suspend_set, "%lld\n");
 
-/* internal use func - does not make sure chip is ready before read */
 static bool IT7260_i2cReadNoReadyCheck(uint8_t buf_index, uint8_t *buffer,
 							uint16_t buf_len)
 {
@@ -256,7 +223,7 @@ static bool IT7260_i2cWriteNoReadyCheck(uint8_t buf_index,
 		.buf = txbuf
 	};
 
-	/* just to be careful */
+	
 	if (buf_len > sizeof(txbuf) - 1) {
 		dev_err(&gl_ts->client->dev, "buf length is out of limit\n");
 		return false;
@@ -268,11 +235,6 @@ static bool IT7260_i2cWriteNoReadyCheck(uint8_t buf_index,
 	return i2c_transfer(gl_ts->client->adapter, &msg, 1);
 }
 
-/*
- * Device is apparently always ready for i2c but not for actual
- * register reads/writes. This function ascertains it is ready
- * for that too. the results of this call often were ignored.
- */
 static bool IT7260_waitDeviceReady(bool forever, bool slowly)
 {
 	uint8_t query;
@@ -318,7 +280,7 @@ static bool IT7260_firmware_reinitialize(u8 command)
 	if (!IT7260_i2cRead(BUF_RESPONSE, rsp, sizeof(rsp)))
 		return false;
 
-	/* a reply of two zero bytes signifies success */
+	
 	return !rsp[0] && !rsp[1];
 }
 
@@ -336,7 +298,7 @@ static bool IT7260_enter_exit_fw_ugrade_mode(bool enter)
 	if (!IT7260_i2cRead(BUF_RESPONSE, resp, sizeof(resp)))
 		return false;
 
-	/* a reply of two zero bytes signifies success */
+	
 	return !resp[0] && !resp[1];
 }
 
@@ -354,12 +316,11 @@ static bool IT7260_chipSetStartOffset(uint16_t offset)
 		return false;
 
 
-	/* a reply of two zero bytes signifies success */
+	
 	return !resp[0] && !resp[1];
 }
 
 
-/* write fw_length bytes from fw_data at chip offset wr_start_offset */
 static bool IT7260_fw_flash_write_verify(unsigned int fw_length,
 			const uint8_t *fw_data, uint16_t wr_start_offset)
 {
@@ -374,36 +335,36 @@ static bool IT7260_fw_flash_write_verify(unsigned int fw_length,
 		unsigned i, retries;
 		uint32_t cur_wr_size;
 
-		/* figure out how much to write */
+		
 		cur_wr_size = fw_length - cur_data_off;
 		if (cur_wr_size > FW_WRITE_CHUNK_SIZE)
 			cur_wr_size = FW_WRITE_CHUNK_SIZE;
 
-		/* prepare the write command */
+		
 		cmd_write[1] = cur_wr_size;
 		for (i = 0; i < cur_wr_size; i++)
 			cmd_write[i + 2] = fw_data[cur_data_off + i];
 
-		/* prepare the read command */
+		
 		cmd_read[1] = cur_wr_size;
 
 		for (retries = 0; retries < FW_WRITE_RETRY_COUNT;
 							retries++) {
 
-			/* set write offset and write the data*/
+			
 			IT7260_chipSetStartOffset(
 					wr_start_offset + cur_data_off);
 			IT7260_i2cWrite(BUF_COMMAND, cmd_write,
 					cur_wr_size + 2);
 
-			/* set offset and read the data back */
+			
 			IT7260_chipSetStartOffset(
 					wr_start_offset + cur_data_off);
 			IT7260_i2cWrite(BUF_COMMAND, cmd_read,
 					sizeof(cmd_read));
 			IT7260_i2cRead(BUF_RESPONSE, buf_read, cur_wr_size);
 
-			/* verify. If success break out of retry loop */
+			
 			i = 0;
 			while (i < cur_wr_size &&
 					buf_read[i] == cmd_write[i + 2])
@@ -414,7 +375,7 @@ static bool IT7260_fw_flash_write_verify(unsigned int fw_length,
 				"write of data offset %u failed on try %u at byte %u/%u\n",
 				cur_data_off, retries, i, cur_wr_size);
 		}
-		/* if we've failed after all the retries, tell the caller */
+		
 		if (retries == FW_WRITE_RETRY_COUNT)
 			return false;
 	}
@@ -422,10 +383,6 @@ static bool IT7260_fw_flash_write_verify(unsigned int fw_length,
 	return true;
 }
 
-/*
- * this code to get versions from the chip via i2c transactions, and save
- * them in driver data structure.
- */
 static void IT7260_get_chip_versions(struct device *dev)
 {
 	static const u8 cmd_read_fw_ver[] = {CMD_READ_VERSIONS,
@@ -477,11 +434,6 @@ static int IT7260_cfg_upload(struct device *dev, bool force)
 		return ret;
 	}
 
-	/*
-	 * This compares the cfg version number from chip and the cfg
-	 * data file. IT flashes only when version of cfg data file is
-	 * greater than that of chip or if it is set for force cfg upgrade.
-	 */
 	if (force)
 		cfg_upgrade = true;
 	else if (IT_CFG_CHECK(gl_ts->cfg_ver, cfg))
@@ -495,14 +447,14 @@ static int IT7260_cfg_upload(struct device *dev, bool force)
 		dev_info(dev, "Config upgrading...\n");
 
 		disable_irq(gl_ts->client->irq);
-		/* enter cfg upload mode */
+		
 		success = IT7260_enter_exit_fw_ugrade_mode(true);
 		if (!success) {
 			dev_err(dev, "Can't enter cfg upgrade mode\n");
 			ret = -EIO;
 			goto out;
 		}
-		/* flash config data if requested */
+		
 		success  = IT7260_fw_flash_write_verify(cfg->size, cfg->data,
 						CHIP_FLASH_SIZE - cfg->size);
 		if (!success) {
@@ -542,11 +494,6 @@ static int IT7260_fw_upload(struct device *dev, bool force)
 		return ret;
 	}
 
-	/*
-	 * This compares the fw version number from chip and the fw data
-	 * file. It flashes only when version of fw data file is greater
-	 * than that of chip or it it is set for force fw upgrade.
-	 */
 	if (force)
 		fw_upgrade = true;
 	else if (IT_FW_CHECK(gl_ts->fw_ver, fw))
@@ -560,14 +507,14 @@ static int IT7260_fw_upload(struct device *dev, bool force)
 		dev_info(dev, "Firmware upgrading...\n");
 
 		disable_irq(gl_ts->client->irq);
-		/* enter fw upload mode */
+		
 		success = IT7260_enter_exit_fw_ugrade_mode(true);
 		if (!success) {
 			dev_err(dev, "Can't enter fw upgrade mode\n");
 			ret = -EIO;
 			goto out;
 		}
-		/* flash the firmware if requested */
+		
 		success = IT7260_fw_flash_write_verify(fw->size, fw->data, 0);
 		if (!success) {
 			dev_err(dev, "failed to upgrade touch firmware\n");
@@ -648,8 +595,6 @@ static ssize_t sysfs_cfg_upgrade_store(struct device *dev,
 		dev_err(dev, "Device is suspended, can't flash cfg!!!\n");
 		return -EBUSY;
 	}
-<<<<<<< HEAD
-=======
 
 	ret = sscanf(buf, "%d", &mode);
 	if (!ret) {
@@ -674,80 +619,6 @@ static ssize_t sysfs_cfg_upgrade_store(struct device *dev,
 	return count;
 }
 
-static ssize_t sysfs_fw_upgrade_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	return scnprintf(buf, MAX_BUFFER_SIZE, "%d\n",
-				gl_ts->fw_upgrade_result);
-}
-
-static ssize_t sysfs_cfg_upgrade_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	return scnprintf(buf, MAX_BUFFER_SIZE, "%d\n",
-				gl_ts->cfg_upgrade_result);
-}
-
-static ssize_t sysfs_force_fw_upgrade_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	int mode = 0, ret;
-
-	if (gl_ts->suspended) {
-		dev_err(dev, "Device is suspended, can't flash fw!!!\n");
-		return -EBUSY;
-	}
->>>>>>> qct_m_rel_es0
-
-	ret = sscanf(buf, "%d", &mode);
-	if (!ret) {
-		dev_err(dev, "failed to read input for sysfs\n");
-		return -EINVAL;
-	}
-
-	mutex_lock(&gl_ts->fw_cfg_mutex);
-	if (mode == 1) {
-		gl_ts->fw_cfg_uploading = true;
-<<<<<<< HEAD
-		ret = IT7260_cfg_upload(dev, false);
-		if (ret) {
-			dev_err(dev, "Failed to flash cfg: %d", ret);
-			gl_ts->cfg_upgrade_result = false;
-		} else {
-			gl_ts->cfg_upgrade_result = true;
-		}
-		gl_ts->fw_cfg_uploading = false;
-=======
-		ret = IT7260_fw_upload(dev, true);
-		if (ret) {
-			dev_err(dev, "Failed to force flash fw: %d", ret);
-			gl_ts->fw_upgrade_result = false;
-		} else {
-			gl_ts->fw_upgrade_result = true;
-		}
-		gl_ts->fw_cfg_uploading = false;
-	}
-	mutex_unlock(&gl_ts->fw_cfg_mutex);
-
-	return count;
-}
-
-static ssize_t sysfs_force_cfg_upgrade_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	int mode = 0, ret;
-
-	if (gl_ts->suspended) {
-		dev_err(dev, "Device is suspended, can't flash cfg!!!\n");
-		return -EBUSY;
->>>>>>> qct_m_rel_es0
-	}
-	mutex_unlock(&gl_ts->fw_cfg_mutex);
-
-	return count;
-}
-
-<<<<<<< HEAD
 static ssize_t sysfs_fw_upgrade_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
@@ -811,14 +682,6 @@ static ssize_t sysfs_force_cfg_upgrade_store(struct device *dev,
 		return -EINVAL;
 	}
 
-=======
-	ret = sscanf(buf, "%d", &mode);
-	if (!ret) {
-		dev_err(dev, "failed to read input for sysfs\n");
-		return -EINVAL;
-	}
-
->>>>>>> qct_m_rel_es0
 	mutex_lock(&gl_ts->fw_cfg_mutex);
 	if (mode == 1) {
 		gl_ts->fw_cfg_uploading = true;
@@ -874,11 +737,6 @@ static ssize_t sysfs_calibration_store(struct device *dev,
 		gl_ts->calibration_success =
 			IT7260_i2cRead(BUF_RESPONSE, &resp, sizeof(resp));
 
-		/* previous logic that was here never called
-		 * IT7260_firmware_reinitialize() due to checking a
-		 * guaranteed-not-null value against null. We now
-		 * call it. Hopefully this is OK
-		 */
 		if (!resp)
 			dev_info(dev, "IT7260_firmware_reinitialize-> %s\n",
 			IT7260_firmware_reinitialize(CMD_FIRMWARE_REINIT_6F)
@@ -927,11 +785,6 @@ static ssize_t sysfs_version_show(struct device *dev,
 static ssize_t sysfs_sleep_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
-	/*
-	 * The usefulness of this was questionable at best - we were at least
-	 * leaking a byte of kernel data (by claiming to return a byte but not
-	 * writing to buf. To fix this now we actually return the sleep status
-	 */
 	*buf = gl_ts->suspended ? '1' : '0';
 	return 1;
 }
@@ -943,11 +796,6 @@ static ssize_t sysfs_sleep_store(struct device *dev,
 
 	ret = sscanf(buf, "%d", &go_to_sleep);
 
-	/* (gl_ts->suspended == true && goToSleepVal > 0) means
-	 * device is already suspended and you want it to be in sleep,
-	 * (gl_ts->suspended == false && goToSleepVal == 0) means
-	 * device is already active and you also want it to be active.
-	 */
 	if ((gl_ts->suspended && go_to_sleep > 0) ||
 			(!gl_ts->suspended && go_to_sleep == 0))
 		dev_err(dev, "duplicate request to %s chip\n",
@@ -1110,7 +958,7 @@ static irqreturn_t IT7260_ts_threaded_handler(int irq, void *devid)
 	u16 x, y;
 	bool palm_detected;
 
-	/* verify there is point data to read & it is readable and valid */
+	
 	IT7260_i2cReadNoReadyCheck(BUF_QUERY, &dev_status, sizeof(dev_status));
 	if (!((dev_status & PT_INFO_BITS) & PT_INFO_YES))
 		return IRQ_HANDLED;
@@ -1121,19 +969,9 @@ static irqreturn_t IT7260_ts_threaded_handler(int irq, void *devid)
 		return IRQ_HANDLED;
 	}
 
-	/* Check if controller moves from idle to active state */
+	
 	if ((point_data.flags & PD_FLAGS_DATA_TYPE_BITS) !=
 					PD_FLAGS_DATA_TYPE_TOUCH) {
-		/*
-		 * This code adds the touch-to-wake functionality to the ITE
-		 * tech driver. When user puts a finger on touch controller in
-		 * idle state, the controller moves to active state and driver
-		 * sends the KEY_WAKEUP event to wake the device. The
-		 * pm_stay_awake() call tells the pm core to stay awake untill
-		 * the CPU cores are up already. The schedule_work() call
-		 * schedule a work that tells the pm core to relax once the CPU
-		 * cores are up.
-		 */
 		if (gl_ts->device_needs_wakeup) {
 			pm_stay_awake(&gl_ts->client->dev);
 			input_report_key(input_dev, KEY_WAKEUP, 1);
@@ -1295,7 +1133,7 @@ static int IT7260_parse_dt(struct device *dev,
 	u32 temp_val;
 	int rc;
 
-	/* reset, irq gpio info */
+	
 	pdata->reset_gpio = of_get_named_gpio_flags(np,
 			"ite,reset-gpio", 0, &pdata->reset_gpio_flags);
 	pdata->irq_gpio = of_get_named_gpio_flags(np,
@@ -1445,7 +1283,7 @@ static int IT7260_ts_probe(struct i2c_client *client,
 		}
 	}
 
-	/* reset gpio info */
+	
 	if (gpio_is_valid(pdata->reset_gpio)) {
 		if (gpio_request(pdata->reset_gpio, "ite_reset_gpio"))
 			dev_err(&client->dev,
@@ -1459,7 +1297,7 @@ static int IT7260_ts_probe(struct i2c_client *client,
 		return pdata->reset_gpio;
 	}
 
-	/* irq gpio info */
+	
 	if (gpio_is_valid(pdata->irq_gpio)) {
 		dev_dbg(&gl_ts->client->dev, "IRQ GPIO %d, IRQ # %d\n",
 				pdata->irq_gpio, gpio_to_irq(pdata->irq_gpio));
@@ -1467,44 +1305,6 @@ static int IT7260_ts_probe(struct i2c_client *client,
 		return pdata->irq_gpio;
 	}
 
-<<<<<<< HEAD
-	pdata->wakeup = of_property_read_bool(client->dev.of_node,
-						"ite,wakeup");
-	pdata->palm_detect_en = of_property_read_bool(client->dev.of_node,
-						"ite,palm-detect-en");
-	if (pdata->palm_detect_en) {
-		ret = of_property_read_u32(client->dev.of_node,
-					"ite,palm-detect-keycode", &temp_val);
-		if (!ret) {
-			pdata->palm_detect_keycode = temp_val;
-		} else {
-			dev_err(&client->dev,
-				"Unable to read palm-detect-keycode\n");
-			return ret;
-		}
-	}
-
-	ret = of_property_read_string(client->dev.of_node,
-				"ite,fw-name", &pdata->fw_name);
-	if (ret && (ret != -EINVAL)) {
-		dev_err(&client->dev, "Unable to read fw file name %d\n", ret);
-		return ret;
-	}
-
-	ret = of_property_read_string(client->dev.of_node,
-				"ite,cfg-name", &pdata->cfg_name);
-	if (ret && (ret != -EINVAL)) {
-		dev_err(&client->dev, "Unable to read cfg file name %d\n", ret);
-		return ret;
-	}
-
-	snprintf(gl_ts->fw_name, MAX_BUFFER_SIZE, "%s",
-		(pdata->fw_name != NULL) ? pdata->fw_name : FW_NAME);
-	snprintf(gl_ts->cfg_name, MAX_BUFFER_SIZE, "%s",
-		(pdata->cfg_name != NULL) ? pdata->cfg_name : CFG_NAME);
-
-=======
->>>>>>> qct_m_rel_es0
 	if (!IT7260_chipIdentify()) {
 		dev_err(&client->dev, "Failed to identify chip!!!");
 		goto err_identification_fail;
@@ -1519,7 +1319,7 @@ static int IT7260_ts_probe(struct i2c_client *client,
 		goto err_input_alloc;
 	}
 
-	/* Initialize mutex for fw and cfg upgrade */
+	
 	mutex_init(&gl_ts->fw_cfg_mutex);
 
 	gl_ts->input_dev->name = DEVICE_NAME;
@@ -1693,14 +1493,6 @@ static int fb_notifier_callback(struct notifier_block *self,
 #ifdef CONFIG_PM
 static int IT7260_ts_resume(struct device *dev)
 {
-<<<<<<< HEAD
-	if (!gl_ts->suspended) {
-		dev_info(dev, "Already in resume state\n");
-		return 0;
-	}
-
-=======
->>>>>>> qct_m_rel_es0
 	if (device_may_wakeup(dev)) {
 		if (gl_ts->device_needs_wakeup) {
 			gl_ts->device_needs_wakeup = false;
@@ -1719,21 +1511,11 @@ static int IT7260_ts_suspend(struct device *dev)
 	if (gl_ts->fw_cfg_uploading) {
 		dev_dbg(dev, "Fw/cfg uploading. Can't go to suspend.\n");
 		return -EBUSY;
-<<<<<<< HEAD
 	}
 
-	if (gl_ts->suspended) {
-		dev_info(dev, "Already in suspend state\n");
-		return 0;
-	}
-
-=======
-	}
-
-	/* put the device in low power idle mode */
+	
 	IT7260_ts_chipLowPowerMode(PWR_CTL_LOW_POWER_MODE);
 
->>>>>>> qct_m_rel_es0
 	if (device_may_wakeup(dev)) {
 		if (!gl_ts->device_needs_wakeup) {
 			gl_ts->device_needs_wakeup = true;

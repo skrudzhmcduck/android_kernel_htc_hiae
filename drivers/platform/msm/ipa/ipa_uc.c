@@ -307,6 +307,17 @@ int ipa_uc_state_check(void)
 }
 EXPORT_SYMBOL(ipa_uc_state_check);
 
+/**
+ * ipa_uc_loaded_check() - Check the uC has been loaded
+ *
+ * Return value: 1 if the uC is loaded, 0 otherwise
+ */
+int ipa_uc_loaded_check(void)
+{
+	return ipa_ctx->uc_ctx.uc_loaded;
+}
+EXPORT_SYMBOL(ipa_uc_loaded_check);
+
 static void ipa_uc_event_handler(enum ipa_irq_type interrupt,
 				 void *private_data,
 				 void *interrupt_data)
@@ -347,6 +358,7 @@ static void ipa_uc_event_handler(enum ipa_irq_type interrupt,
 			IPAERR("IPA has encountered a ZIP engine error\n");
 			ipa_ctx->uc_ctx.uc_zip_error = true;
 		}
+		BUG();
 	} else if (ipa_ctx->uc_ctx.uc_sram_mmio->eventOp ==
 		IPA_HW_2_CPU_EVENT_LOG_INFO) {
 			IPADBG("uC evt log info ofst=0x%x\n",
@@ -376,7 +388,6 @@ static int ipa_uc_panic_notifier(struct notifier_block *this,
 
 	ipa_ctx->uc_ctx.uc_sram_mmio->cmdOp =
 		IPA_CPU_2_HW_CMD_ERR_FATAL;
-	ipa_ctx->uc_ctx.pending_cmd = ipa_ctx->uc_ctx.uc_sram_mmio->cmdOp;
 	/* ensure write to shared memory is done before triggering uc */
 	wmb();
 	ipa_write_reg(ipa_ctx->mmio, IPA_IRQ_EE_UC_n_OFFS(0), 0x1);
@@ -715,7 +726,7 @@ int ipa_uc_reset_pipe(enum ipa_client_type ipa_client)
 	       IPA_CLIENT_IS_PROD(ipa_client) ? "CONS" : "PROD", ep_idx);
 
 	ret = ipa_uc_send_cmd(cmd.raw32b, IPA_CPU_2_HW_CMD_RESET_PIPE, 0,
-			      true, 10*HZ);
+			      false, 10*HZ);
 
 	return ret;
 }
@@ -735,21 +746,18 @@ int ipa_uc_monitor_holb(enum ipa_client_type ipa_client, bool enable)
 	union IpaHwmonitorHolbCmdData_t cmd;
 	int ep_idx;
 	int ret;
-	struct ipa_ep_context *ep;
+
+	/* HOLB monitoring is applicable only to 2.6L. */
+	if (ipa_ctx->ipa_hw_type != IPA_HW_v2_6L) {
+		IPADBG("Not applicable on this target\n");
+		return 0;
+	}
 
 	ep_idx = ipa_get_ep_mapping(ipa_client);
 	if (ep_idx == -1) {
 		IPAERR("Invalid IPA client\n");
 		return 0;
 	}
-
-	ep = &ipa_ctx->ep[ep_idx];
-
-	if (!ep->valid) {
-		IPAERR("EP not valid.\n");
-		return 0;
-	}
-
 
 	/*
 	 * If the uC interface has not been initialized yet,
@@ -772,7 +780,7 @@ int ipa_uc_monitor_holb(enum ipa_client_type ipa_client, bool enable)
 	cmd.params.monitorPipe = (u8)(enable ? 1 : 0);
 	cmd.params.pipeNum = (u8)ep_idx;
 
-	IPADBG("uC holb monitoring on IPA pipe %d\n, Enable: %d",
+	IPADBG("uC holb monitoring on IPA pipe %d, Enable: %d\n",
 	       ep_idx, enable);
 
 	ret = ipa_uc_send_cmd(cmd.raw32b,

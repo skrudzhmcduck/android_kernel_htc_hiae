@@ -15,6 +15,7 @@
 #define _WCNSS_WLAN_H_
 
 #include <linux/device.h>
+#include <linux/sched.h>
 
 #define IRIS_REGULATORS		4
 #define PRONTO_REGULATORS	3
@@ -43,6 +44,7 @@ struct wcnss_wlan_config {
 	void __iomem	*msm_wcnss_base;
 	int	iris_id;
 	int	vbatt;
+	int	pc_disable_latency;
 	struct vregs_level pronto_vlevel[PRONTO_REGULATORS];
 	struct vregs_level iris_vlevel[IRIS_REGULATORS];
 };
@@ -137,6 +139,7 @@ void wcnss_init_work(struct work_struct *work , void *callbackptr);
 void wcnss_init_delayed_work(struct delayed_work *dwork , void *callbackptr);
 int wcnss_get_iris_name(char *iris_version);
 void wcnss_en_wlan_led_trigger(void);
+void wcnss_dump_stack(struct task_struct *task);
 
 #ifdef CONFIG_WCNSS_REGISTER_DUMP_ON_BITE
 void wcnss_log_debug_regs_on_bite(void);
@@ -152,8 +155,7 @@ int wcnss_get_wlan_unsafe_channel(
 				u16 *ch_count);
 #define wcnss_wlan_get_drvdata(dev) dev_get_drvdata(dev)
 #define wcnss_wlan_set_drvdata(dev, data) dev_set_drvdata((dev), (data))
-/* WLAN driver uses these names */
 #define req_riva_power_on_lock(name) wcnss_req_power_on_lock(name)
 #define free_riva_power_on_lock(name) wcnss_free_power_on_lock(name)
 
-#endif /* _WCNSS_WLAN_H_ */
+#endif 

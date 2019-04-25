@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -92,7 +92,7 @@ void kgsl_dump_syncpoints(struct kgsl_device *device,
 		}
 		case KGSL_CMD_SYNCPOINT_TYPE_FENCE:
 			if (event->handle)
-				dev_err(device->dev, "  fence: [%p] %s\n",
+				dev_err(device->dev, "  fence: [%pK] %s\n",
 					event->handle->fence,
 					event->handle->name);
 			else
@@ -1022,7 +1022,7 @@ int kgsl_cmdbatch_add_synclist(struct kgsl_device *device,
 			return ret;
 
 		sync.type = syncpoint.type;
-		sync.priv = (void __user *) (uintptr_t) syncpoint.priv;
+		sync.priv = to_user_ptr(syncpoint.priv);
 		sync.size = syncpoint.size;
 
 		ret = kgsl_cmdbatch_add_sync(device, cmdbatch, &sync);

@@ -922,6 +922,16 @@ static int i2c_msm_dma_xfer_prepare(struct i2c_msm_ctrl *ctrl)
 			tx->desc_cnt_cur += 2; 
 		}
 
+		
+		if (buf->is_last) {
+			
+			ctrl->xfer.rx_ovrhd_cnt += 2; 
+			ctrl->xfer.tx_ovrhd_cnt += 2; 
+
+			tx->desc_cnt_cur++;
+			rx->desc_cnt_cur++;
+		}
+
 		if ((rx->desc_cnt_cur >= I2C_MSM_DMA_RX_SZ) ||
 		    (tx->desc_cnt_cur >= I2C_MSM_DMA_TX_SZ))
 			return -ENOMEM;
@@ -979,60 +989,21 @@ static void i2c_msm_dma_callback_xfer_complete(void *dma_async_param)
 	complete(&ctrl->xfer.complete);
 }
 
-static int i2c_msm_dma_xfer_buf(struct i2c_msm_ctrl *ctrl,
-	struct i2c_msm_dma_chan *chan, phys_addr_t buf_phys_addr, u32 buf_len,
-								u32 flags)
-{
-	struct scatterlist sg[1];
-	struct dma_async_tx_descriptor *dma_desc;
-
-	sg_init_table(sg, 1);
-	sg_dma_len(&sg[0])     = buf_len;
-	sg_dma_address(&sg[0]) = buf_phys_addr;
-
-	dma_desc = dmaengine_prep_slave_sg(chan->dma_chan, sg, 1, chan->dir,
-									flags);
-
-	if (dma_desc < 0) {
-		dev_err(ctrl->dev,
-		   "error dmaengine_prep_slave_sg:%ld\n", PTR_ERR(dma_desc));
-		return PTR_ERR(dma_desc);
-	}
-	dma_desc->callback = i2c_msm_dma_callback_xfer_complete;
-	dma_desc->callback_param = ctrl;
-
-	dmaengine_submit(dma_desc);
-	dma_async_issue_pending(chan->dma_chan);
-
-	return 0;
-}
-
-static int i2c_msm_dma_xfer_rmv_inp_fifo_tag(struct i2c_msm_ctrl *ctrl, u32 len)
-{
-	int ret;
-	ret = i2c_msm_dma_xfer_buf(ctrl, &ctrl->xfer.dma.chan[I2C_MSM_DMA_RX],
-					 ctrl->xfer.dma.input_tag.phy_addr,
-					 len, 0);
-
-	if (ret < 0)
-		dev_err(ctrl->dev,
-			"error on reading DMA input tags len:%d sps-err:%d\n",
-			len, ret);
-
-	return ret;
-}
-
 static int i2c_msm_dma_xfer_process(struct i2c_msm_ctrl *ctrl)
 {
 	struct i2c_msm_xfer_mode_dma *dma = &ctrl->xfer.dma;
-	struct i2c_msm_dma_chan *tx;
-	struct i2c_msm_dma_chan *rx;
-	struct i2c_msm_dma_buf  *buf_itr;
-	struct i2c_msm_dma_chan *chan;
+	struct i2c_msm_dma_chan *tx       = &dma->chan[I2C_MSM_DMA_TX];
+	struct i2c_msm_dma_chan *rx       = &dma->chan[I2C_MSM_DMA_RX];
+	struct scatterlist *sg_rx         = NULL;
+	struct scatterlist *sg_rx_itr     = NULL;
+	struct scatterlist *sg_tx         = NULL;
+	struct scatterlist *sg_tx_itr     = NULL;
+	struct dma_async_tx_descriptor     *dma_desc_rx;
+	struct dma_async_tx_descriptor     *dma_desc_tx;
+	struct i2c_msm_dma_buf             *buf_itr;
 	int  i;
-	int  ret           = 0;
-	u32  dma_flags     = 0; 
-	char str[64];
+	int  ret = 0;
+
 	i2c_msm_dbg(ctrl, MSM_DBG, "Going to enqueue %zu buffers in DMA",
 							dma->buf_arr_cnt);
 
@@ -1044,84 +1015,107 @@ static int i2c_msm_dma_xfer_process(struct i2c_msm_ctrl *ctrl)
 		return ret;
 	}
 
-	tx = &dma->chan[I2C_MSM_DMA_TX];
-	rx = &dma->chan[I2C_MSM_DMA_RX];
+	sg_tx = kcalloc(tx->desc_cnt_cur, sizeof(struct scatterlist),
+								GFP_KERNEL);
+	if (!sg_tx) {
+		ret = -ENOMEM;
+		goto dma_xfer_end;
+	}
+	sg_init_table(sg_tx, tx->desc_cnt_cur);
+	sg_tx_itr = sg_tx;
+
+	sg_rx = kcalloc(rx->desc_cnt_cur, sizeof(struct scatterlist),
+								GFP_KERNEL);
+	if (!sg_rx) {
+		ret = -ENOMEM;
+		goto dma_xfer_end;
+	}
+	sg_init_table(sg_rx, rx->desc_cnt_cur);
+	sg_rx_itr = sg_rx;
+
 	buf_itr = dma->buf_arr;
 
 	for (i = 0; i < dma->buf_arr_cnt ; ++i, ++buf_itr) {
 		
-		i2c_msm_dbg(ctrl, MSM_DBG, "queueing dma tag %s",
-			i2c_msm_dbg_dma_tag_to_str(&buf_itr->tag, str,
-							ARRAY_SIZE(str)));
+		sg_dma_address(sg_tx_itr) = buf_itr->tag.buf;
+		sg_dma_len(sg_tx_itr) = buf_itr->tag.len;
+		++sg_tx_itr;
 
-		ret = i2c_msm_dma_xfer_buf(ctrl, tx, buf_itr->tag.buf,
-						buf_itr->tag.len, dma_flags);
-		if (ret) {
-			dev_err(ctrl->dev, "error:%d on queuing tag in dma.\n",
-									ret);
-			goto dma_xfer_end;
-		}
-
-		
 		if (buf_itr->is_rx) {
-			ret = i2c_msm_dma_xfer_rmv_inp_fifo_tag(ctrl, 2);
-			if (ret)
-				goto dma_xfer_end;
-		}
+			
+			sg_dma_address(sg_rx_itr) =
+					ctrl->xfer.dma.input_tag.phy_addr;
+			sg_dma_len(sg_rx_itr)     = QUP_BUF_OVERHD_BC;
+			++sg_rx_itr;
 
-		
-		if (buf_itr->is_last && !ctrl->xfer.last_is_rx)
-			dma_flags = (SPS_IOVEC_FLAG_EOT | SPS_IOVEC_FLAG_NWD);
-
-		
-		chan = buf_itr->is_rx ? rx : tx;
-
-		i2c_msm_dbg(ctrl, MSM_DBG,
-			"Queue data buf to %s chan desc(phy:0x%llx len:%zu) "
-			"EOT:%d NWD:%d",
-			chan->name, (u64) buf_itr->ptr.phy_addr, buf_itr->len,
-			!!(dma_flags & SPS_IOVEC_FLAG_EOT),
-			!!(dma_flags & SPS_IOVEC_FLAG_NWD));
-
-		ret = i2c_msm_dma_xfer_buf(ctrl, chan, buf_itr->ptr.phy_addr,
-						buf_itr->len, dma_flags);
-		if (ret < 0) {
-			dev_err(ctrl->dev,
-				"error:%d on queuing data to %s DMA channel\n",
-				ret, chan->name);
-			goto dma_xfer_end;
+			
+			sg_dma_address(sg_rx_itr) = buf_itr->ptr.phy_addr;
+			sg_dma_len(sg_rx_itr)     = buf_itr->len;
+			++sg_rx_itr;
+		} else {
+			sg_dma_address(sg_tx_itr) = buf_itr->ptr.phy_addr;
+			sg_dma_len(sg_tx_itr)     = buf_itr->len;
+			++sg_tx_itr;
 		}
 	}
 
-	if (ctrl->xfer.last_is_rx) {
-		ret = i2c_msm_dma_xfer_rmv_inp_fifo_tag(ctrl, 2);
-		if (ret)
-			goto dma_xfer_end;
+	
+	sg_dma_address(sg_tx_itr) = dma->eot_n_flush_stop_tags.phy_addr;
+	sg_dma_len(sg_tx_itr)     = QUP_BUF_OVERHD_BC;
+	++sg_tx_itr;
 
-		dma_flags = (SPS_IOVEC_FLAG_EOT | SPS_IOVEC_FLAG_NWD);
+	sg_dma_address(sg_rx_itr) = ctrl->xfer.dma.input_tag.phy_addr;
+	sg_dma_len(sg_rx_itr)     = QUP_BUF_OVERHD_BC;
+	++sg_rx_itr;
 
-		
-		ret = i2c_msm_dma_xfer_buf(ctrl, tx,
-			dma->eot_n_flush_stop_tags.phy_addr, 2, dma_flags);
-		if (ret < 0) {
-			dev_err(ctrl->dev,
-			"error:%d on queuing EOT+FLUSH_STOP tags to tx EOT:1 NWD:1\n",
-									ret);
-			goto dma_xfer_end;
-		}
+	dma_desc_tx = dmaengine_prep_slave_sg(tx->dma_chan,
+						sg_tx,
+						sg_tx_itr - sg_tx,
+						tx->dir,
+						(SPS_IOVEC_FLAG_EOT |
+							SPS_IOVEC_FLAG_NWD));
+	if (dma_desc_tx < 0) {
+		dev_err(ctrl->dev, "error dmaengine_prep_slave_sg tx:%ld\n",
+							PTR_ERR(dma_desc_tx));
+		ret = PTR_ERR(dma_desc_tx);
+		goto dma_xfer_end;
 	}
+
+	
+	dma_desc_tx->callback       = i2c_msm_dma_callback_xfer_complete;
+	dma_desc_tx->callback_param = ctrl;
+	dmaengine_submit(dma_desc_tx);
+	dma_async_issue_pending(tx->dma_chan);
+
+	
+	dma_desc_rx = dmaengine_prep_slave_sg(rx->dma_chan, sg_rx,
+					sg_rx_itr - sg_rx, rx->dir, 0);
+	if (dma_desc_rx < 0) {
+		dev_err(ctrl->dev,
+			"error dmaengine_prep_slave_sg rx:%ld\n",
+						PTR_ERR(dma_desc_rx));
+		ret = PTR_ERR(dma_desc_rx);
+		goto dma_xfer_end;
+	}
+
+	dmaengine_submit(dma_desc_rx);
+	dma_async_issue_pending(rx->dma_chan);
 
 	
 	ret = i2c_msm_qup_state_set(ctrl, QUP_STATE_RUN);
 	if (ret) {
 		dev_err(ctrl->dev, "transition to run state failed before DMA transaction :%d\n",
 									ret);
-		return ret;
+		goto dma_xfer_end;
 	}
 
 	ret = i2c_msm_xfer_wait_for_completion(ctrl, &ctrl->xfer.complete);
 
 dma_xfer_end:
+	
+	kfree(sg_tx);
+	kfree(sg_rx);
+
 	return ret;
 }
 
@@ -1257,11 +1251,6 @@ static int i2c_msm_dma_xfer(struct i2c_msm_ctrl *ctrl)
 		return ret;
 	}
 
-	if (ctrl->xfer.last_is_rx) {
-		ctrl->xfer.rx_ovrhd_cnt += 2; 
-		ctrl->xfer.tx_ovrhd_cnt += 2; 
-	}
-
 	
 	ret = i2c_msm_dma_xfer_prepare(ctrl);
 	if (ret < 0) {
@@ -1303,6 +1292,9 @@ static bool i2c_msm_qup_slv_holds_bus(struct i2c_msm_ctrl *ctrl)
 	bool slv_holds_bus =	!(status & QUP_I2C_SDA) &&
 				(status & QUP_BUS_ACTIVE) &&
 				!(status & QUP_BUS_MASTER);
+
+	dev_info(ctrl->dev, "%s: status = 0x%x\n", __func__, status);
+
 	if (slv_holds_bus)
 		dev_info(ctrl->dev,
 			"bus lines held low by a slave detected\n");
@@ -1708,12 +1700,40 @@ static int i2c_msm_qup_post_xfer(struct i2c_msm_ctrl *ctrl, int err)
 		if ((ctrl->xfer.err == I2C_MSM_ERR_ARB_LOST) ||
 		    (ctrl->xfer.err == I2C_MSM_ERR_BUS_ERR)  ||
 		    (ctrl->xfer.err == I2C_MSM_ERR_TIMEOUT)) {
-			if (i2c_msm_qup_slv_holds_bus(ctrl))
+			if (i2c_msm_qup_slv_holds_bus(ctrl)) {
+				dev_info(ctrl->dev, "i2c_msm_qup_slv_holds_bus"
+						    " returns true\n");
 				qup_i2c_recover_bus_busy(ctrl);
+			} else {
+				dev_info(ctrl->dev, "i2c_msm_qup_slv_holds_bus"
+						    " returns false\n");
+				qup_i2c_recover_bus_busy(ctrl);
+			}
 
 			
 			if (!err) {
 				dev_info(ctrl->dev, "Assign rc to %d\n",
+					 (-EPROTO));
+				err = -EPROTO;
+			}
+		}
+	} else {
+		if ((ctrl->xfer.err == I2C_MSM_ERR_ARB_LOST) ||
+		    (ctrl->xfer.err == I2C_MSM_ERR_BUS_ERR)  ||
+		    (ctrl->xfer.err == I2C_MSM_ERR_TIMEOUT)) {
+			if (i2c_msm_qup_slv_holds_bus(ctrl)) {
+				dev_info(ctrl->dev, "active: i2c_msm_qup_slv_holds_bus"
+						    " returns true, err = 0x%x\n", ctrl->xfer.err);
+				qup_i2c_recover_bus_busy(ctrl);
+			} else {
+				dev_info(ctrl->dev, "active: i2c_msm_qup_slv_holds_bus"
+						    " returns false, err = 0x%x\n", ctrl->xfer.err);
+				qup_i2c_recover_bus_busy(ctrl);
+			}
+
+			
+			if (!err) {
+				dev_info(ctrl->dev, "active: Assign rc to %d\n",
 					 (-EPROTO));
 				err = -EPROTO;
 			}

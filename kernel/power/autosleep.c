@@ -24,7 +24,7 @@ static void try_to_suspend(struct work_struct *work)
 	if (!pm_get_wakeup_count(&initial_count, true)){
 #ifdef CONFIG_HTC_POWER_DEBUG
 		pr_info("[P] suspend abort, wakeup event nonzero\n");
-		htc_print_active_wakeup_sources();
+		htc_print_active_wakeup_sources(false);
 #endif
 		goto out;
 	}

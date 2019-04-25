@@ -1,3 +1,5 @@
+// Version Name : 00-00-0000
+// Time Stamp : 2015/05/25 11:34:02
 
 const unsigned char CcMagicCode[] = {
 0x00,
@@ -4132,4 +4134,4 @@ const unsigned long ClFromCode[] = {
 0xff1c88,
 0x7fffff,
 };
- #define		VERNUM		0x05050408	
+ #define		VERNUM		0x05050408	// WD08H 

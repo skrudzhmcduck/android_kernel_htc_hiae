@@ -40,6 +40,12 @@ struct qct_lsc_struct{
 	unsigned long int	lsc_checksum;
 };
 
+struct gyro_struct{
+	unsigned long int gyro_caBuff[1];
+	unsigned long int fuse_id[4];
+	unsigned long int check_sum[1];
+};
+
 struct qct_awb_lsc_struct{
 	unsigned long int caBuff[8];
 	struct qct_lsc_struct qct_lsc_data;
@@ -50,6 +56,7 @@ struct qct_awb_lsc_struct{
 	unsigned long int alight_caBuff[8]; 
 	unsigned long int dualflashcaBuff[12];  
 	unsigned long int awb_verify;
+    struct gyro_struct gyro_data;
 };
 
 static unsigned char cam_awb_ram[AWB_CAL_MAX_SIZE];

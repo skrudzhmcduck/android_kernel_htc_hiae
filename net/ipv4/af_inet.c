@@ -133,6 +133,12 @@ static inline int current_has_network(void)
 }
 #endif
 
+#ifdef CONFIG_HTC_DEBUG_RIL_PCN0012_HTC_NET_MONITOR
+#include <htc_ril/htc_net_monitor.h>
+#endif
+
+int sysctl_reserved_port_bind __read_mostly = 1;
+
 static struct list_head inetsw[SOCK_MAX];
 static DEFINE_SPINLOCK(inetsw_lock);
 
@@ -403,6 +409,10 @@ int inet_release(struct socket *sock)
 		    !(current->flags & PF_EXITING))
 			timeout = sk->sk_lingertime;
 		sock->sk = NULL;
+
+#ifdef CONFIG_HTC_DEBUG_RIL_PCN0012_HTC_NET_MONITOR
+		net_monitor_dump_data(sk, 0, HTC_NM_TYPE_CLOSE);
+#endif
 		sk->sk_prot->close(sk, timeout);
 	}
 	return 0;
@@ -501,7 +511,17 @@ int inet_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 
 	if (!inet_sk(sk)->inet_num && inet_autobind(sk))
 		return -EAGAIN;
+#ifdef CONFIG_HTC_DEBUG_RIL_PCN0012_HTC_NET_MONITOR
+	{
+		int r = 0;
+		r = sk->sk_prot->connect(sk, uaddr, addr_len);
+		if( r == 0 )
+			net_monitor_dump_data(sk, 0, HTC_NM_TYPE_UDP_CONNECT);
+		return r;
+	}
+#else
 	return sk->sk_prot->connect(sk, uaddr, addr_len);
+#endif
 }
 EXPORT_SYMBOL(inet_dgram_connect);
 
@@ -565,6 +585,9 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 		if (err < 0)
 			goto out;
 
+#ifdef CONFIG_HTC_DEBUG_RIL_PCN0012_HTC_NET_MONITOR
+		net_monitor_dump_data(sk, 0, HTC_NM_TYPE_TCP_CONNECT);
+#endif
 		sock->state = SS_CONNECTING;
 		
 #ifdef CONFIG_HTC_GARBAGE_FILTER
@@ -636,6 +659,11 @@ int inet_accept(struct socket *sock, struct socket *newsock, int flags)
 	lock_sock(sk2);
 
 	sock_rps_record_flow(sk2);
+
+#ifdef CONFIG_HTC_DEBUG_RIL_PCN0012_HTC_NET_MONITOR
+	net_monitor_dump_data(sk2, 0, HTC_NM_TYPE_ACCEPT);
+#endif
+
 	WARN_ON(!((1 << sk2->sk_state) &
 		  (TCPF_ESTABLISHED | TCPF_SYN_RECV |
 		  TCPF_CLOSE_WAIT | TCPF_CLOSE)));
@@ -691,7 +719,17 @@ int inet_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
 	    inet_autobind(sk))
 		return -EAGAIN;
 
+#ifdef CONFIG_HTC_DEBUG_RIL_PCN0012_HTC_NET_MONITOR
+	{
+		int r = 0;
+		r = sk->sk_prot->sendmsg(iocb, sk, msg, size);
+		if( r > 0 )
+			net_monitor_dump_data(sk, size, HTC_NM_TYPE_SEND);
+		return r;
+	}
+#else
 	return sk->sk_prot->sendmsg(iocb, sk, msg, size);
+#endif
 }
 EXPORT_SYMBOL(inet_sendmsg);
 
@@ -726,6 +764,10 @@ int inet_recvmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
 				   flags & ~MSG_DONTWAIT, &addr_len);
 	if (err >= 0)
 		msg->msg_namelen = addr_len;
+
+#ifdef CONFIG_HTC_DEBUG_RIL_PCN0012_HTC_NET_MONITOR
+	net_monitor_dump_data(sk, size, HTC_NM_TYPE_RECEIVE);
+#endif
 	return err;
 }
 EXPORT_SYMBOL(inet_recvmsg);

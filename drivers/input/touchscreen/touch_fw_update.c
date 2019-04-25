@@ -25,6 +25,7 @@
 #include <linux/of.h>
 #include <linux/poll.h>
 #include <asm/byteorder.h>
+#include <linux/mutex.h>
 #include <linux/miscdevice.h>
 #include <linux/platform_device.h>
 #include <linux/input/touch_fw_update.h>
@@ -59,6 +60,7 @@
 static u32 debug_mask = 0x00000000;
 static int driver_probe_status = 0;
 static struct kobject *android_touch_kobj;
+static DEFINE_MUTEX(fwu_mutex);
 
 struct cdev_data {
 	int size_count;
@@ -92,7 +94,7 @@ static ssize_t debug_show(struct device *dev, struct device_attribute *attr,
 static ssize_t debug_store(struct device *dev, struct device_attribute *attr,
 	const char *buf, size_t count)
 {
-	if (sscanf(buf, "%ix", &debug_mask) != 1) {
+	if (sscanf(buf, "%ux", &debug_mask) != 1) {
 		pr_err("bad parameter");
 		return -EINVAL;
 	}
@@ -154,6 +156,7 @@ static struct device_attribute dev_attr[] = {
 static int touch_fwu_open(struct inode *inode, struct file *filp)
 {
 	pr_info("%s", __func__);
+	mutex_lock(&fwu_mutex);
 	fwu_data->download_start= 1;
 	fwu_data->flash_status = 1;
 	fwu_data->update_bypass = 0;
@@ -161,6 +164,7 @@ static int touch_fwu_open(struct inode *inode, struct file *filp)
 	fwu_cdev_data->size_count = 0;
 	fwu_cdev_data->fw_size = 0;
 	filp->private_data = fwu_cdev_data;
+	mutex_unlock(&fwu_mutex);
 	return 0;
 }
 
@@ -170,6 +174,7 @@ static int touch_fwu_release(struct inode *inode, struct file *filp)
 	unsigned char *buf;
 
 	pr_info("%s", __func__);
+	mutex_lock(&fwu_mutex);
 	if (fw_cdev->buf != NULL) {
 		pr_info("%s: free buf", __func__);
 		buf = fw_cdev->buf;
@@ -184,6 +189,7 @@ static int touch_fwu_release(struct inode *inode, struct file *filp)
 		fwu_data->flash_status = 2;
 	fwu_data->download_start= 0;
 	fwu_data->flash_progress = 100;
+	mutex_unlock(&fwu_mutex);
 	return 0;
 }
 
@@ -200,15 +206,30 @@ static ssize_t touch_fwu_write(struct file *file, const char __user *buf, size_t
 	u16 *tmp;
 
 	pr_info("%s: %zu", __func__, count);
+
+	if (!count || count > fw_cdev->fw_size - fw_cdev->size_count) {
+		pr_err("%s: Invalid count\n", __func__);
+		return -EINVAL;
+	}
+
 	tmp = kzalloc(count, GFP_KERNEL);
+	if (!tmp) {
+		pr_err("%s: Failed to allocate memory\n", __func__);
+		return -ENOMEM;
+	}
+
 	if(copy_from_user(tmp, buf, count)) {
 		pr_err("%s: copy_from_user failed", __func__);
 		kfree(tmp);
 		return -ENOMEM;
 	}
 
-	memcpy(fw_cdev->buf+fw_cdev->size_count, tmp, count);
-	fw_cdev->size_count += count;
+	mutex_lock(&fwu_mutex);
+	if(fw_cdev->buf) {
+		memcpy(fw_cdev->buf+fw_cdev->size_count, tmp, count);
+		fw_cdev->size_count += count;
+	}
+	mutex_unlock(&fwu_mutex);
 	kfree(tmp);
 	return 0;
 }
@@ -227,12 +248,14 @@ static long touch_fwu_ioctl(struct file *filp, unsigned int cmd, unsigned long a
 	struct firmware *fw;
 
 	pr_info("%s: cmd: %x", __func__, cmd);
+	mutex_lock(&fwu_mutex);
 	switch (cmd) {
 		case FW_UPDATE_PROCCESS:
 			pr_info("%s: FW_UPDATE_PROCCESS", __func__);
 			fw = fwu_data->fw;
 			if (fw == NULL) {
 				pr_err("%s, no fw data", __func__);
+				mutex_unlock(&fwu_mutex);
 				return -1;
 			}
 			ret = fw_update_process(fw);
@@ -259,6 +282,7 @@ static long touch_fwu_ioctl(struct file *filp, unsigned int cmd, unsigned long a
 						GFP_KERNEL);
 					if (!buf) {
 						pr_err("%s, allocate failed", __func__);
+						mutex_unlock(&fwu_mutex);
 						return -1;
 					}
 					fw_cdev->buf = buf;
@@ -277,6 +301,7 @@ static long touch_fwu_ioctl(struct file *filp, unsigned int cmd, unsigned long a
 			fw = kzalloc(sizeof(struct firmware), GFP_KERNEL);
 			if (fw == NULL) {
 				pr_err("%s, no fw data", __func__);
+				mutex_unlock(&fwu_mutex);
 				return -1;
 			}
 			fwu_data->fw = fw;
@@ -290,6 +315,7 @@ static long touch_fwu_ioctl(struct file *filp, unsigned int cmd, unsigned long a
 		default:
 			break;
 	}
+	mutex_unlock(&fwu_mutex);
 	return ret;
 }
 
@@ -335,8 +361,7 @@ int register_fw_update(struct touch_fwu_notifier *notifier)
 				pr_err("%s: allocate failed", __func__);
 				return -1;
 			}
-		}
-		else {
+		} else {
 			pr_err("%s: register failed", __func__);
 			return -1;
 		}

@@ -135,6 +135,7 @@ void gqti_ctrl_disconnect(void *gr, u8 port_num);
 void gqti_ctrl_update_ipa_pipes(void *, u8 port_num, u32 ipa_prod,
 					u32 ipa_cons);
 
+/*++ 2015/5/21, USB Team, PCN00005 ++*/
 enum fserial_func_type {
 	USB_FSER_FUNC_NONE,
 	USB_FSER_FUNC_SERIAL,
@@ -164,4 +165,5 @@ static __maybe_unused enum fserial_func_type serial_str_to_func_type(const char 
 
 	return USB_FSER_FUNC_NONE;
 }
+/*-- 2015/5/21, USB Team, PCN00005 --*/
 #endif

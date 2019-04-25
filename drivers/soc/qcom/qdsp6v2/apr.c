@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -36,9 +36,25 @@
 #include <linux/qdsp6v2/apr_tal.h>
 #include <linux/qdsp6v2/dsp_debug.h>
 #include <linux/ratelimit.h>
+#include <linux/io.h>
 
+#define LPASS_QDSP6SS_QDSP6SS_SAW2 0x0C2B0000
+#define LPM_REGISTER_TABLE_SIZE 3
 #define SCM_Q6_NMI_CMD 0x1
 
+struct lpass_spm_register_offset {
+	char name[80];
+	uint32_t offset;
+};
+
+static const struct lpass_spm_register_offset
+		register_table[LPM_REGISTER_TABLE_SIZE] = {
+	{"LPASS_QDSP6SS_SAW2_SPM_STS", 0xC},
+	{"LPASS_QDSP6SS_SAW2_SPM_CTL", 0x30},
+	{"LPASS_QDSP6SS_SAW2_SPM_STS2", 0x38},
+};
+
+static void __iomem *lpass_qdsp6ss_saw2;
 static struct apr_q6 q6;
 static struct apr_client client[APR_DEST_MAX][APR_CLIENT_MAX];
 
@@ -181,6 +197,22 @@ static struct apr_svc_table svc_tbl_voice[] = {
 
 static struct apr_func_dsp apr_dsp_func;
 static const char *apr_invalid = "invalid";
+
+static void log_spm_registers(void)
+{
+	int i = 0, *v_add;
+
+	if (lpass_qdsp6ss_saw2) {
+		pr_err("<--- Logging LPASS SPM registers --->");
+		for (i = 0; i < LPM_REGISTER_TABLE_SIZE; i++) {
+			v_add = lpass_qdsp6ss_saw2 + register_table[i].offset;
+			pr_err("%s : 0x%x\n", register_table[i].name,
+							ioread32(v_add));
+		}
+		pr_err("<---------------- END -------------->");
+	} else
+		pr_err("Failure in ioremap of LPASS SPM SAW2 register!\n");
+}
 
 const char *apr_get_adsp_subsys_name(void)
 {
@@ -481,7 +513,7 @@ void apr_cb_func(void *buf, int len, void *priv)
 	pr_debug("\n*****************\n");
 
 	if (!buf || len <= APR_HDR_SIZE) {
-		pr_err("APR: Improper apr pkt received:%p %d\n", buf, len);
+		pr_err("APR: Improper apr pkt received:%pK %d\n", buf, len);
 		return;
 	}
 	hdr = buf;
@@ -567,7 +599,7 @@ void apr_cb_func(void *buf, int len, void *priv)
 		return;
 	}
 	pr_debug("svc_idx = %d\n", i);
-	pr_debug("%x %x %x %p %p\n", c_svc->id, c_svc->dest_id,
+	pr_debug("%x %x %x %pK %pK\n", c_svc->id, c_svc->dest_id,
 		 c_svc->client_id, c_svc->fn, c_svc->priv);
 	data.payload_size = hdr->pkt_size - hdr_size;
 	data.opcode = hdr->opcode;
@@ -631,7 +663,7 @@ static void apr_reset_deregister(struct work_struct *work)
 			container_of(work, struct apr_reset_work, work);
 
 	handle = apr_reset->handle;
-	pr_debug("%s:handle[%p]\n", __func__, handle);
+	pr_debug("%s:handle[%pK]\n", __func__, handle);
 	apr_deregister(handle);
 	kfree(apr_reset);
 }
@@ -664,7 +696,7 @@ int apr_deregister(void *handle)
 		client[dest_id][client_id].svc_cnt--;
 		if (!client[dest_id][client_id].svc_cnt) {
 			svc->need_reset = 0x0;
-			pr_debug("%s: service is reset %p\n", __func__, svc);
+			pr_debug("%s: service is reset %pK\n", __func__, svc);
 		}
 	}
 
@@ -692,7 +724,7 @@ void apr_reset(void *handle)
 
 	if (!handle)
 		return;
-	pr_debug("%s: handle[%p]\n", __func__, handle);
+	pr_debug("%s: handle[%pK]\n", __func__, handle);
 
 	if (apr_reset_workqueue == NULL) {
 		pr_err("%s: apr_reset_workqueue is NULL\n", __func__);
@@ -855,6 +887,10 @@ static int lpass_notifier_cb(struct notifier_block *this, unsigned long code,
 		powered_on = true;
 		pr_debug("L-Notify: Bootup Completed\n");
 		break;
+	case SUBSYS_SOC_RESET:
+		pr_debug("L-Notify: SoC Reset Initiated\n");
+		log_spm_registers();
+		break;
 	default:
 		pr_err("L-Notify: Generel: %lu\n", code);
 		break;
@@ -978,6 +1014,9 @@ static void apr_cleanup(void)
 				mutex_destroy(&client[i][j].svc[k].m_lock);
 		}
 	}
+	/* Unmap LPASS SPM SAW2 register */
+	if (lpass_qdsp6ss_saw2)
+		iounmap(lpass_qdsp6ss_saw2);
 }
 
 static int apr_probe(struct platform_device *pdev)
@@ -1045,6 +1084,12 @@ static int apr_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "%s: subsys_notif_register failed ret = %d\n",
 				__func__, ret);
 	}
+
+	/* Remap lpass spm saw2 register */
+	lpass_qdsp6ss_saw2 = ioremap(LPASS_QDSP6SS_QDSP6SS_SAW2, 0x1000);
+	if (lpass_qdsp6ss_saw2 == NULL)
+		pr_err("ioremap failure for the lpass spm saw2 register\n");
+
 	return 0;
 }
 

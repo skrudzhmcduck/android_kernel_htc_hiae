@@ -26,14 +26,21 @@
 #define CABC_INDEX	 0
 #define FLASH_INDEX	 1
 #define BURST_INDEX	 2
+#define COLOR_TEMP_INDEX 3
+#define COLOR_PROFILE_INDEX 4
+
 struct attribute_status htc_attr_stat[] = {
 	{"cabc_level_ctl", 1, 1, 1},
 	{"flash", 1, 1, 1},
 	{"burst_switch", 0, 0, 0},
+	{"color_temp_ctl", 0, 0, 0},
+	{"color_profile_ctl", 0, 0, 0},
 };
 
 
-static struct delayed_work dimming_work;
+static void dimming_do_work(struct work_struct *work);
+static DECLARE_DELAYED_WORK(dimming_work, dimming_do_work);
+static DEFINE_MUTEX(dimming_wq_lock);
 
 struct msm_fb_data_type *mfd_instance;
 #define DEBUG_BUF   2048
@@ -44,6 +51,7 @@ static char debug_buf[DEBUG_BUF];
 struct mdss_dsi_ctrl_pdata *ctrl_instance = NULL;
 static char dcs_cmds[DCS_MAX_CNT];
 static char *tmp;
+
 static struct dsi_cmd_desc debug_cmd = {
 	{DTYPE_DCS_LWRITE, 1, 0, 0, 1, 1}, dcs_cmds
 };
@@ -130,6 +138,11 @@ EXPORT_SYMBOL(disp_vendor);
 
 void htc_panel_info(const char *panel)
 {
+	if (strcmp(&panel_name[0], "") != 0) {
+		PR_DISP_INFO("%s: Created already!\n", __func__);
+		return;
+	}
+
 	android_disp_kobj = kobject_create_and_add("android_display", NULL);
 	if (!android_disp_kobj) {
 		PR_DISP_ERR("%s: subsystem register failed\n", __func__);
@@ -172,7 +185,7 @@ static ssize_t camera_bl_show(struct device *dev,
         struct device_attribute *attr, char *buf)
 {
 	ssize_t ret =0;
-	sprintf(buf,"%s%u\n", "BL_CAM_MIN=", backlightvalue);
+	snprintf(buf, PAGE_SIZE,"%s%u\n", "BL_CAM_MIN=", backlightvalue);
 	ret = strlen(buf) + 1;
 	return ret;
 }
@@ -185,7 +198,7 @@ static ssize_t attrs_show(struct device *dev,
 
 	for (i = 0 ; i < ARRAY_SIZE(htc_attr_stat); i++) {
 		if (strcmp(attr->attr.name, htc_attr_stat[i].title) == 0) {
-			sprintf(buf,"%d\n", htc_attr_stat[i].cur_value);
+			snprintf(buf, PAGE_SIZE,"%d\n", htc_attr_stat[i].cur_value);
 		        ret = strlen(buf) + 1;
 			break;
 		}
@@ -375,10 +388,14 @@ static ssize_t burst_store(struct device *dev, struct device_attribute *attr,
 static DEVICE_ATTR(backlight_info, S_IRUGO, camera_bl_show, NULL);
 static DEVICE_ATTR(cabc_level_ctl, S_IRUGO | S_IWUSR, attrs_show, attr_store);
 static DEVICE_ATTR(burst_switch, S_IRUGO | S_IWUSR, attrs_show, burst_store);
+static DEVICE_ATTR(color_temp_ctl, S_IRUGO | S_IWUSR, attrs_show, attr_store);
+static DEVICE_ATTR(color_profile_ctl, S_IRUGO | S_IWUSR, attrs_show, attr_store);
 static struct attribute *htc_extend_attrs[] = {
 	&dev_attr_backlight_info.attr,
 	&dev_attr_cabc_level_ctl.attr,
 	&dev_attr_burst_switch.attr,
+	&dev_attr_color_temp_ctl.attr,
+	&dev_attr_color_profile_ctl.attr,
 	NULL,
 };
 
@@ -405,7 +422,9 @@ void htc_reset_status(void)
 		htc_attr_stat[i].cur_value = htc_attr_stat[i].def_value;
 	}
 	
+	mutex_lock(&dimming_wq_lock);
 	cancel_delayed_work_sync(&dimming_work);
+	mutex_unlock(&dimming_wq_lock);
 
 	return;
 }
@@ -419,7 +438,6 @@ void htc_set_cabc(struct msm_fb_data_type *mfd)
 {
 	struct mdss_panel_data *pdata;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
-	struct dcs_cmd_req cmdreq;
 
 	pdata = dev_get_platdata(&mfd->pdev->dev);
 
@@ -441,27 +459,15 @@ void htc_set_cabc(struct msm_fb_data_type *mfd)
 	if (htc_attr_stat[CABC_INDEX].req_value == htc_attr_stat[CABC_INDEX].cur_value)
 		return;
 
-	memset(&cmdreq, 0, sizeof(cmdreq));
-
 	if (htc_attr_stat[CABC_INDEX].req_value == 0) {
-		cmdreq.cmds = ctrl_pdata->cabc_off_cmds.cmds;
-		cmdreq.cmds_cnt = ctrl_pdata->cabc_off_cmds.cmd_cnt;
+		mdss_dsi_panel_cmds_send(ctrl_pdata, &ctrl_pdata->cabc_off_cmds);
 	} else if (htc_attr_stat[CABC_INDEX].req_value == 1) {
-		cmdreq.cmds = ctrl_pdata->cabc_ui_cmds.cmds;
-		cmdreq.cmds_cnt = ctrl_pdata->cabc_ui_cmds.cmd_cnt;
+		mdss_dsi_panel_cmds_send(ctrl_pdata, &ctrl_pdata->cabc_ui_cmds);
 	} else if (htc_attr_stat[CABC_INDEX].req_value == 2) {
-		cmdreq.cmds = ctrl_pdata->cabc_video_cmds.cmds;
-		cmdreq.cmds_cnt = ctrl_pdata->cabc_video_cmds.cmd_cnt;
+		mdss_dsi_panel_cmds_send(ctrl_pdata, &ctrl_pdata->cabc_video_cmds);
 	} else {
-		cmdreq.cmds = ctrl_pdata->cabc_ui_cmds.cmds;
-		cmdreq.cmds_cnt = ctrl_pdata->cabc_ui_cmds.cmd_cnt;
+		mdss_dsi_panel_cmds_send(ctrl_pdata, &ctrl_pdata->cabc_ui_cmds);
 	}
-
-	cmdreq.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL;
-	cmdreq.rlen = 0;
-	cmdreq.cb = NULL;
-
-	mdss_dsi_cmdlist_put(ctrl_pdata, &cmdreq);
 
 	htc_attr_stat[CABC_INDEX].cur_value = htc_attr_stat[CABC_INDEX].req_value;
 	PR_DISP_INFO("%s cabc mode=%d\n", __func__, htc_attr_stat[CABC_INDEX].cur_value);
@@ -546,7 +552,7 @@ static void dimming_do_work(struct work_struct *work)
 
 		pdata->set_backlight(pdata, mfd_instance->bl_level);
 		mfd_instance->bl_level_scaled = mfd_instance->bl_level;
-		mfd_instance->bl_updated = 1;
+		mfd_instance->allow_bl_update = 1;
 		mutex_unlock(&mfd_instance->bl_lock);
 		PR_DISP_INFO("%s set default backlight!\n", __func__);
 	}
@@ -581,10 +587,10 @@ void htc_dimming_on(struct msm_fb_data_type *mfd)
 		return;
 
 	mfd_instance = mfd;
-
-	INIT_DELAYED_WORK(&dimming_work, dimming_do_work);
-
+	mutex_lock(&dimming_wq_lock);
 	schedule_delayed_work(&dimming_work, msecs_to_jiffies(1000));
+	mutex_unlock(&dimming_wq_lock);
+
 	return;
 }
 
@@ -737,4 +743,112 @@ void htc_set_enable_backlight_when_flashlight(struct msm_fb_data_type *mfd)
 		PR_DISP_INFO("%s set backlight off!\n", __func__);
 	}
 	htc_attr_stat[FLASH_INDEX].cur_value = htc_attr_stat[FLASH_INDEX].req_value;
+}
+
+int shrink_pwm(struct msm_fb_data_type *mfd, int val)
+{
+	struct mdss_panel_data *pdata = NULL;
+	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
+	unsigned int shrink_br = BRI_SETTING_DEF;
+
+	pdata = dev_get_platdata(&mfd->pdev->dev);
+
+	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+				panel_data);
+
+	if (val <= 0) {
+		shrink_br = 0;
+	} else if (val > 0 && (val < BRI_SETTING_MIN)) {
+		shrink_br = ctrl->pwm_min;
+	} else if ((val >= BRI_SETTING_MIN) && (val <= BRI_SETTING_DEF)) {
+		shrink_br = (val - BRI_SETTING_MIN) * (ctrl->pwm_default - ctrl->pwm_min) /
+				(BRI_SETTING_DEF - BRI_SETTING_MIN) + ctrl->pwm_min;
+	} else if (val > BRI_SETTING_DEF && val <= BRI_SETTING_MAX) {
+		shrink_br = (val - BRI_SETTING_DEF) * (ctrl->pwm_max - ctrl->pwm_default) /
+				(BRI_SETTING_MAX - BRI_SETTING_DEF) + ctrl->pwm_default;
+	} else if (val > BRI_SETTING_MAX)
+		shrink_br = ctrl->pwm_max;
+
+	PR_DISP_INFO("brightness orig=%d, transformed=%d\n", val, shrink_br);
+
+	return shrink_br;
+}
+
+void htc_set_color_temp(struct msm_fb_data_type *mfd, bool force)
+{
+	struct mdss_panel_data *pdata;
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+	int req_mode = 0;
+
+	pdata = dev_get_platdata(&mfd->pdev->dev);
+
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+					panel_data);
+
+	if (!ctrl_pdata->color_temp_cnt)
+		return;
+
+	if (htc_attr_stat[COLOR_TEMP_INDEX].req_value >= ctrl_pdata->color_temp_cnt)
+		return;
+
+	if (!force && (htc_attr_stat[COLOR_TEMP_INDEX].req_value == htc_attr_stat[COLOR_TEMP_INDEX].cur_value))
+		return;
+
+
+	req_mode = htc_attr_stat[COLOR_TEMP_INDEX].req_value;
+	mdss_dsi_panel_cmds_send(ctrl_pdata, &ctrl_pdata->color_temp_cmds[req_mode]);
+
+	htc_attr_stat[COLOR_TEMP_INDEX].cur_value = htc_attr_stat[COLOR_TEMP_INDEX].req_value;
+	pr_info("%s: color temp mode=%d\n", __func__, htc_attr_stat[COLOR_TEMP_INDEX].cur_value);
+	return;
+}
+
+void htc_set_color_profile(struct msm_fb_data_type *mfd, bool force)
+{
+	struct mdss_panel_data *pdata;
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+
+	pdata = dev_get_platdata(&mfd->pdev->dev);
+
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+					panel_data);
+
+	if (!ctrl_pdata->color_default_cmds.cmd_cnt || !ctrl_pdata->color_srgb_cmds.cmd_cnt)
+		return;
+
+	if ((htc_attr_stat[COLOR_PROFILE_INDEX].req_value >= MAX_MODE) || (htc_attr_stat[COLOR_PROFILE_INDEX].req_value < DEFAULT_MODE))
+		return;
+
+	if (!force && (htc_attr_stat[COLOR_PROFILE_INDEX].req_value == htc_attr_stat[COLOR_PROFILE_INDEX].cur_value))
+		return;
+
+	if (htc_attr_stat[COLOR_PROFILE_INDEX].req_value == SRGB_MODE) {
+		mdss_dsi_panel_cmds_send(ctrl_pdata, &ctrl_pdata->color_srgb_cmds);
+	} else {
+		mdss_dsi_panel_cmds_send(ctrl_pdata, &ctrl_pdata->color_default_cmds);
+	}
+
+	htc_attr_stat[COLOR_PROFILE_INDEX].cur_value = htc_attr_stat[COLOR_PROFILE_INDEX].req_value;
+	pr_info("%s: color profile mode=%d\n", __func__, htc_attr_stat[COLOR_PROFILE_INDEX].cur_value);
+	return;
+}
+
+void htc_set_color_temp_default(struct msm_fb_data_type *mfd) {
+
+	struct mdss_panel_data *pdata;
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+
+	pdata = dev_get_platdata(&mfd->pdev->dev);
+
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+					panel_data);
+
+	if (!ctrl_pdata && !ctrl_pdata->color_temp_cnt)
+		return;
+
+	htc_attr_stat[COLOR_TEMP_INDEX].req_value = ctrl_pdata->color_temp_default;
+	htc_attr_stat[COLOR_TEMP_INDEX].cur_value = ctrl_pdata->color_temp_default;
+	htc_attr_stat[COLOR_TEMP_INDEX].def_value = ctrl_pdata->color_temp_default;
+	pr_info("%s: Value =%d\n", __func__, htc_attr_stat[COLOR_TEMP_INDEX].def_value);
+
 }

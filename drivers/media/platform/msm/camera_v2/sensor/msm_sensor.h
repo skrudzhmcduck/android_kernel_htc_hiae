@@ -95,6 +95,10 @@ struct msm_sensor_ctrl_t {
 	uint8_t is_yuv;
 };
 
+#ifdef CONFIG_OIS_CALIBRATION
+int htc_ois_calibration(struct msm_sensor_ctrl_t *s_ctrl, int cam_id);
+#endif
+
 int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp);
 
 int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp);
@@ -118,6 +122,9 @@ int msm_sensor_free_sensor_data(struct msm_sensor_ctrl_t *s_ctrl);
 
 int32_t msm_sensor_init_default_params(struct msm_sensor_ctrl_t *s_ctrl);
 
+struct file* msm_fopen(const char* path, int flags, int rights);
+int msm_fwrite(struct file* file, unsigned long long offset, unsigned char* data, unsigned int size);
+void msm_fclose(struct file* file);
 uint32_t msm_sensor_get_boardinfo(struct device_node *of_node);
 
 int32_t msm_sensor_get_dt_gpio_req_tbl(struct device_node *of_node,

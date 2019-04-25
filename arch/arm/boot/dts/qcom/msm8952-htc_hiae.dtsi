@@ -49,8 +49,14 @@
 	qcom,usbin-chgr-cfg = <5>;
 	qcom,usbin-vadc = <&pmi8950_vadc>;
 
+	qcom,r-hw-mb-impedance = <150>;
 	qcom,qc20-iusb-max-ma = <1200>;
+	qcom,qc30-iusb-max-ma = <1200>;
+	qcom,iusb-max-ma-5V-adapter = <1500>;
 	qcom,battery-data = <&hiae_batterydata>;
+
+	htc,htc-thermal-temp-thr-qc20 = <420>;
+	htc,htc-thermal-limit-iusb-cur-qc20 = <900>;
 
 	htc,eoc-ibat-thre-ma = <215>;
 	htc,adjust-fastchg-cur-thr-mv = <4340>;
@@ -75,6 +81,7 @@
 	qcom,stored-batt-temperature = <271>;
 	qcom,stored-batt-temp-diff = <200>;
 	qcom,fg-chg-iterm-ma = <50>;
+	qcom,fg-cutoff-voltage-mv = <3400>;
 	qcom,stored-batt-total-level = <0>;
 	qcom,stored-batt-overheat-sec = <0>;
 	qcom,stored-batt-first-use = <0>;

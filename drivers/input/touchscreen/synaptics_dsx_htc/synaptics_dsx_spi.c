@@ -65,6 +65,7 @@ static int parse_config(struct device *dev, struct synaptics_dsx_board_data *bda
 	uint8_t cnt = 0, i = 0;
 	u32 data = 0;
 	int len = 0, size = 0;
+	const char *panel_id = NULL;
 
 	pr_info(" %s\n", __func__);
 	node = dev->of_node;
@@ -90,6 +91,11 @@ static int parse_config(struct device *dev, struct synaptics_dsx_board_data *bda
 
 		if (of_property_read_u32(pp, "pr_number", &data) == 0)
 			cfg_table[i].pr_number = data;
+
+		if (of_property_read_string(pp, "disp_panel", &panel_id))
+			cfg_table[i].disp_panel = NULL;
+		else
+			cfg_table[i].disp_panel = panel_id;
 
 		if (of_property_read_u32(pp, "eng_id", &data) == 0)
 			cfg_table[i].eng_id = data;
@@ -330,6 +336,13 @@ static int parse_dt(struct device *dev, struct synaptics_dsx_board_data *bdata)
 		bdata->support_cover = 0;
 	else
 		bdata->support_cover = value;
+
+	retval = of_property_read_u32(np, "synaptics,config-setting-group",
+			&value);
+	if (retval < 0)
+		bdata->setting_group = 0;
+	else
+		bdata->setting_group = value;
 
 	retval = of_property_read_u32(np, "synaptics,hall-block-time",
 			&value);

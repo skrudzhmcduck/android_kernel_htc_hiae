@@ -42,12 +42,19 @@
 	(((reg >= 0x200) && (reg <= 0x4FF)) ? 1 : 0)
 #define MSM8X16_WCD_IS_TOMBAK_REG(reg) \
 	(((reg >= 0x000) && (reg <= 0x1FF)) ? 1 : 0)
+/*
+ * MCLK activity indicators during suspend and resume call
+ */
 #define MCLK_SUS_DIS	1
 #define MCLK_SUS_RSC	2
 #define MCLK_SUS_NO_ACT	3
 
 #define NUM_DECIMATORS	4
 #define MSM89XX_VDD_SPKDRV_NAME "cdc-vdd-spkdrv"
+
+#define DEFAULT_MULTIPLIER 800
+#define DEFAULT_GAIN 9
+#define DEFAULT_OFFSET 100
 
 extern const u8 msm8x16_wcd_reg_readable[MSM8X16_WCD_CACHE_SIZE];
 extern const u8 msm8x16_wcd_reg_readonly[MSM8X16_WCD_CACHE_SIZE];
@@ -64,11 +71,41 @@ enum codec_versions {
 };
 
 
+enum wcd_curr_ref {
+	I_h4_UA = 0,
+	I_pt5_UA,
+	I_14_UA,
+	I_l4_UA,
+	I_1_UA,
+};
+
+enum wcd_mbhc_imp_det_pin {
+	WCD_MBHC_DET_NONE = 0,
+	WCD_MBHC_DET_HPHL,
+	WCD_MBHC_DET_HPHR,
+	WCD_MBHC_DET_BOTH,
+};
+
+
+/* Each micbias can be assigned to one of three cfilters
+ * Vbatt_min >= .15V + ldoh_v
+ * ldoh_v >= .15v + cfiltx_mv
+ * If ldoh_v = 1.95 160 mv < cfiltx_mv < 1800 mv
+ * If ldoh_v = 2.35 200 mv < cfiltx_mv < 2200 mv
+ * If ldoh_v = 2.75 240 mv < cfiltx_mv < 2600 mv
+ * If ldoh_v = 2.85 250 mv < cfiltx_mv < 2700 mv
+ */
+
 struct wcd9xxx_micbias_setting {
 	u8 ldoh_v;
-	u32 cfilt1_mv; 
-	u32 cfilt2_mv; 
-	u32 cfilt3_mv; 
+	u32 cfilt1_mv; /* in mv */
+	u32 cfilt2_mv; /* in mv */
+	u32 cfilt3_mv; /* in mv */
+	/* Different WCD9xxx series codecs may not
+	 * have 4 mic biases. If a codec has fewer
+	 * mic biases, some of these properties will
+	 * not be used.
+	 */
 	u8 bias1_cfilt_sel;
 	u8 bias2_cfilt_sel;
 	u8 bias3_cfilt_sel;
@@ -99,6 +136,7 @@ enum msm8x16_wcd_mbhc_analog_pwr_cfg {
 	MSM8X16_WCD_NUM_ANALOG_PWR_CONFIGS,
 };
 
+/* Number of input and output I2S port */
 enum {
 	MSM8X16_WCD_RX1 = 0,
 	MSM8X16_WCD_RX2,
@@ -115,7 +153,7 @@ enum {
 };
 
 enum {
-	
+	/* INTR_REG 0 - Digital Periph */
 	MSM8X16_WCD_IRQ_SPKR_CNP = 0,
 	MSM8X16_WCD_IRQ_SPKR_CLIP,
 	MSM8X16_WCD_IRQ_SPKR_OCP,
@@ -124,7 +162,7 @@ enum {
 	MSM8X16_WCD_IRQ_MBHC_PRESS,
 	MSM8X16_WCD_IRQ_MBHC_INSREM_DET,
 	MSM8X16_WCD_IRQ_MBHC_HS_DET,
-	
+	/* INTR_REG 1 - Analog Periph */
 	MSM8X16_WCD_IRQ_EAR_OCP,
 	MSM8X16_WCD_IRQ_HPHR_OCP,
 	MSM8X16_WCD_IRQ_HPHL_OCP,
@@ -140,6 +178,11 @@ enum {
 	ON_DEMAND_SUPPLIES_MAX,
 };
 
+/*
+ * The delay list is per codec HW specification.
+ * Please add delay in the list in the future instead
+ * of magic number
+ */
 enum {
 	CODEC_DELAY_1_MS = 1000,
 	CODEC_DELAY_1_1_MS  = 1100,
@@ -159,11 +202,22 @@ struct on_demand_supply {
 	atomic_t ref;
 };
 
+struct wcd_imped_i_ref {
+	enum wcd_curr_ref curr_ref;
+	int min_val;
+	int multiplier;
+	int gain_adj;
+	int offset;
+};
+
 struct msm8916_asoc_mach_data {
 	int codec_type;
 	int ext_pa;
 	int us_euro_gpio;
 	int spk_ext_pa_gpio;
+	int ext_audio_switch_gpio;
+	u32 ext_audio_switch_active_high;
+	struct regulator *ext_audio_switch_supply;
 	int mclk_freq;
 	int lb_mode;
 	u8 micbias1_cap_mode;
@@ -239,14 +293,15 @@ struct msm8x16_wcd_priv {
 	bool dec_active[NUM_DECIMATORS];
 	struct on_demand_supply on_demand_list[ON_DEMAND_SUPPLIES_MAX];
 	struct regulator *spkdrv_reg;
-	
+	/* mbhc module */
 	struct wcd_mbhc mbhc;
-	
+	/* cal info for codec */
 	struct fw_info *fw_data;
 	struct blocking_notifier_head notifier;
 	int (*codec_spk_ext_pa_cb)(struct snd_soc_codec *codec, int enable);
 	unsigned long status_mask;
-
+	struct wcd_imped_i_ref imped_i_ref;
+	enum wcd_mbhc_imp_det_pin imped_det_pin;
 };
 
 extern int msm8x16_wcd_mclk_enable(struct snd_soc_codec *codec, int mclk_enable,

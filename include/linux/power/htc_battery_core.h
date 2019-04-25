@@ -31,6 +31,10 @@ ktime_to_ns(ktime_get()), tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, \
 tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec); \
 } while (0)
 
+#define BATT_DEBUG(x...) do { \
+printk(KERN_INFO "[BATT] " x); \
+} while (0)
+
 #define BATT_ERR(x...) do { \
 struct timespec ts; \
 struct rtc_time tm; \
@@ -107,6 +111,9 @@ struct battery_info_reply {
 	int aicl_ma;
 	unsigned int htc_extension;	
 	unsigned int level_accu;
+#ifdef CONFIG_HTC_CHARGER
+	bool is_htcchg_ext_mode;
+#endif 
 };
 
 struct htc_battery_core {
@@ -114,6 +121,13 @@ struct htc_battery_core {
 	int (*func_show_batt_attr)(struct device_attribute *attr, char *buf);
 	int (*func_show_cc_attr)(struct device_attribute *attr, char *buf);
 	int (*func_show_htc_extension_attr)(struct device_attribute *attr, char *buf);
+	int (*func_show_charger_type_attr)(struct device_attribute *attr, char *buf);
+	int (*func_show_thermal_batt_temp_attr)(struct device_attribute *attr, char *buf);
+	int (*func_show_batt_bidata_attr)(struct device_attribute *attr, char *buf);
+	int (*func_show_consist_data_attr)(struct device_attribute *attr, char *buf);
+	int (*func_show_cycle_data_attr)(struct device_attribute *attr, char *buf);
+	int (*func_show_batt_chked_attr)(struct device_attribute *attr, char *buf);
+	int (*func_batt_asp_set_attr)(int count);
 	int (*func_get_battery_info)(struct battery_info_reply *buffer);
 	int (*func_charger_control)(enum charger_control_flag);
 	int (*func_context_event_handler)(enum batt_context_event);
@@ -124,6 +138,9 @@ struct htc_battery_core {
 	void (*func_set_full_level_dis_batt_chg)(int full_level_dis_batt_chg);
 	int (*func_get_chg_status)(enum power_supply_property);
 	int (*func_set_chg_property)(enum power_supply_property, int val);
+#ifdef CONFIG_HTC_CHARGER
+	int (*func_set_smbchg_property)(struct power_supply *psy, enum power_supply_property, const union power_supply_propval *val);
+#endif 
 	void (*func_trigger_store_battery_data)(int trigger_flag);
 	void (*func_qb_mode_shutdown_status)(int trigger_flag);
 	int (*func_ftm_charger_control)(enum ftm_charger_control_flag);

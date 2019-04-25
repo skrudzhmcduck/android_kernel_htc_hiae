@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,6 +18,7 @@
 #include <linux/hrtimer.h>
 #include <linux/of_device.h>
 #include <linux/spmi.h>
+#include <linux/regulator/consumer.h>
 #include <linux/interrupt.h>
 #include <linux/qpnp/pwm.h>
 #include <linux/err.h>
@@ -141,13 +142,18 @@
 #define SC_FOUND_BIT			0x08
 #define SC_MAX_DURATION			5
 
+#define QPNP_HAP_SHORT_VIB_TIME		0
+#define SPMI_WRITE_FAIL			0
+#define LONG_DURATION			1
+#define SHORT_DURATION			2
+
 #define QPNP_HAP_TIMEOUT_MS_MAX		15000
 #define QPNP_HAP_STR_SIZE		20
 #define QPNP_HAP_MAX_RETRIES		5
 #define QPNP_HAP_CYCLS			5
 #define QPNP_TEST_TIMER_MS		5
 
-#define AUTO_RES_ENABLE_TIMEOUT		20000
+#define QPNP_HAP_TIME_REQ_FOR_BACK_EMF_GEN 20000
 #define AUTO_RES_ERR_CAPTURE_RES	5
 #define AUTO_RES_ERR_MAX		15
 
@@ -230,6 +236,7 @@ struct qpnp_pwm_info {
 
 struct qpnp_hap {
 	struct spmi_device *spmi;
+	struct regulator *vcc_pon;
 	struct hrtimer hap_timer;
 	struct hrtimer auto_res_err_poll_timer;
 	struct timed_output_dev timed_dev;
@@ -248,7 +255,11 @@ struct qpnp_hap {
 	#ifdef CONFIG_VIB_TRIGGERS
         struct vib_trigger_enabler enabler;
 	#endif
+	u32 short_play_rate_us;
+	u32 short_vmax;
+	u32 short_duration;
 	u32 timeout_ms;
+	u32 time_required_to_generate_back_emf_us;
 	u32 vmax_mv;
 	u32 ilim_ma;
 	u32 sc_deb_cycles;
@@ -260,6 +271,13 @@ struct qpnp_hap {
 	u32 play_irq;
 	u32 sc_irq;
 	u16 base;
+	u8 last_set;
+	u8 short_vol_register;
+	u8 short_freq_register1;
+	u8 short_freq_register2;
+	u8 long_vol_register;
+	u8 long_freq_register1;
+	u8 long_freq_register2;
 	u8 act_type;
 	u8 wave_shape;
 	u8 wave_samp[QPNP_HAP_WAV_SAMP_LEN];
@@ -270,9 +288,11 @@ struct qpnp_hap {
 	u8 lra_res_cal_period;
 	u8 sc_duration;
 	u8 ext_pwm_dtest_line;
+	bool soft_mode_enable;
 	bool state;
 	bool use_play_irq;
 	bool use_sc_irq;
+	bool manage_pon_supply;
 	bool wf_update;
 	bool pwm_cfg_state;
 	bool buffer_cfg_state;
@@ -284,6 +304,7 @@ struct qpnp_hap {
 
 static uint32_t sc_irq_count = 0;
 static struct qpnp_hap *ghap;
+static int qpnp_hap_switch(u8 vib_duration);
 
 static int qpnp_hap_read_reg(struct qpnp_hap *hap, u8 *data, u16 addr)
 {
@@ -648,12 +669,21 @@ static int qpnp_hap_vmax_config(struct qpnp_hap *hap)
 	else if (hap->vmax_mv > QPNP_HAP_VMAX_MAX_MV)
 		hap->vmax_mv = QPNP_HAP_VMAX_MAX_MV;
 
+	if (hap->short_vmax < QPNP_HAP_VMAX_MIN_MV)
+		hap->short_vmax = QPNP_HAP_VMAX_MIN_MV;
+	else if (hap->short_vmax > QPNP_HAP_VMAX_MAX_MV)
+		hap->short_vmax = QPNP_HAP_VMAX_MAX_MV;
+
 	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_VMAX_REG(hap->base));
 	if (rc < 0)
 		return rc;
 	reg &= QPNP_HAP_VMAX_MASK;
+	hap->short_vol_register = reg;
 	temp = hap->vmax_mv / QPNP_HAP_VMAX_MIN_MV;
 	reg |= (temp << QPNP_HAP_VMAX_SHIFT);
+	hap->long_vol_register = reg;
+	temp = hap->short_vmax / QPNP_HAP_VMAX_MIN_MV;
+	hap->short_vol_register |= (temp << QPNP_HAP_VMAX_SHIFT);
 	rc = qpnp_hap_write_reg(hap, &reg, QPNP_HAP_VMAX_REG(hap->base));
 	if (rc)
 		return rc;
@@ -727,12 +757,13 @@ static int qpnp_hap_parse_buffer_dt(struct qpnp_hap *hap)
 	hap->use_play_irq = of_property_read_bool(spmi->dev.of_node,
 				"qcom,use-play-irq");
 	if (hap->use_play_irq) {
-		hap->play_irq = spmi_get_irq_byname(hap->spmi,
+		rc = spmi_get_irq_byname(hap->spmi,
 					NULL, "play-irq");
-		if (hap->play_irq < 0) {
+		if (rc < 0) {
 			dev_err(&spmi->dev, "Unable to get play irq\n");
-			return hap->play_irq;
+			return rc;
 		}
+		hap->play_irq = rc;
 	}
 
 	return 0;
@@ -1440,6 +1471,7 @@ static int qpnp_hap_set(struct qpnp_hap *hap, int on)
 	int rc = 0;
 	u8 val = 0;
 	unsigned long timeout_ns = POLL_TIME_AUTO_RES_ERR_NS;
+	u32 back_emf_delay_us = hap->time_required_to_generate_back_emf_us;
 
 	if (hap->play_mode == QPNP_HAP_PWM) {
 		if (on)
@@ -1449,25 +1481,28 @@ static int qpnp_hap_set(struct qpnp_hap *hap, int on)
 	} else if (hap->play_mode == QPNP_HAP_BUFFER ||
 			hap->play_mode == QPNP_HAP_DIRECT) {
 		if (on) {
+			if (hap->correct_lra_drive_freq ||
+				hap->auto_res_mode == QPNP_HAP_AUTO_RES_QWD)
+				qpnp_hap_auto_res_enable(hap, 0);
+
 			rc = qpnp_hap_mod_enable(hap, on);
 			if (rc < 0)
 				return rc;
 
-			if (hap->correct_lra_drive_freq)
-				qpnp_hap_auto_res_enable(hap, 0);
-
 			rc = qpnp_hap_play(hap, on);
-
 			if (hap->act_type == QPNP_HAP_LRA &&
-					hap->correct_lra_drive_freq) {
-				usleep_range(AUTO_RES_ENABLE_TIMEOUT,
-					(AUTO_RES_ENABLE_TIMEOUT + 1));
-
+				(hap->correct_lra_drive_freq ||
+				hap->auto_res_mode == QPNP_HAP_AUTO_RES_QWD)) {
+				usleep_range(back_emf_delay_us,
+							back_emf_delay_us + 1);
 				rc = qpnp_hap_auto_res_enable(hap, 1);
 				if (rc < 0)
 					return rc;
-
+			}
+			if (hap->act_type == QPNP_HAP_LRA &&
+						hap->correct_lra_drive_freq) {
 				spin_lock(&hap->lock);
+				hrtimer_cancel(&hap->auto_res_err_poll_timer);
 				hrtimer_start(&hap->auto_res_err_poll_timer,
 						ktime_set(0, timeout_ns),
 						 HRTIMER_MODE_REL);
@@ -1499,15 +1534,11 @@ static int qpnp_hap_set(struct qpnp_hap *hap, int on)
 
 static void qpnp_hap_td_enable(struct timed_output_dev *dev, int value)
 {
+	u8 current_set = LONG_DURATION;
 	struct qpnp_hap *hap = container_of(dev, struct qpnp_hap,
 					 timed_dev);
 
 	spin_lock(&hap->lock);
-
-	if (hap->act_type == QPNP_HAP_LRA &&
-				hap->correct_lra_drive_freq)
-		hrtimer_cancel(&hap->auto_res_err_poll_timer);
-
 	hrtimer_cancel(&hap->hap_timer);
 
 	if (value == 0) {
@@ -1520,6 +1551,11 @@ static void qpnp_hap_td_enable(struct timed_output_dev *dev, int value)
 		VIB_INFO_LOG("enable=%d.\n", value);
 		value = (value > hap->timeout_ms ?
 				 hap->timeout_ms : value);
+		if(hap->soft_mode_enable) {
+			current_set = (value > hap->short_duration ? LONG_DURATION : SHORT_DURATION);
+			if((hap->last_set != current_set) || (hap->last_set == SPMI_WRITE_FAIL) || (hap->last_set == SHORT_DURATION))
+				qpnp_hap_switch(current_set);
+		}
 		hap->state = 1;
 		hrtimer_start(&hap->hap_timer,
 			      ktime_set(value / 1000, (value % 1000) * 1000000),
@@ -1585,7 +1621,14 @@ static void qpnp_hap_worker(struct work_struct *work)
 	struct qpnp_hap *hap = container_of(work, struct qpnp_hap,
 					 work);
 	u8 val = 0x00;
-	int rc;
+	int rc, reg_en;
+
+	if (hap->vcc_pon) {
+		reg_en = regulator_enable(hap->vcc_pon);
+		if (reg_en)
+			pr_err("%s: could not enable vcc_pon regulator\n",
+				 __func__);
+	}
 
 	if (hap->sc_duration == SC_MAX_DURATION) {
 		if (hap->state)
@@ -1596,6 +1639,13 @@ static void qpnp_hap_worker(struct work_struct *work)
 		if (hap->play_mode == QPNP_HAP_PWM)
 			qpnp_hap_mod_enable(hap, hap->state);
 		qpnp_hap_set(hap, hap->state);
+	}
+
+	if (hap->vcc_pon && !reg_en) {
+		rc = regulator_disable(hap->vcc_pon);
+		if (rc)
+			pr_err("%s: could not disable vcc_pon regulator\n",
+				 __func__);
 	}
 }
 
@@ -1666,10 +1716,78 @@ static int qpnp_haptic_resume(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(qpnp_haptic_pm_ops, qpnp_haptic_suspend, qpnp_haptic_resume);
 
+static int qpnp_hap_switch(u8 vib_duration) {
+	int rc;
+	u8 temp, tempCFG;
+	struct qpnp_hap *hap = ghap;
+
+	if(vib_duration == LONG_DURATION) {
+		rc = qpnp_hap_write_reg(hap, &hap->long_vol_register, QPNP_HAP_VMAX_REG(hap->base));
+		if (rc)
+			goto SPMI_ERROR;
+
+		rc = qpnp_hap_write_reg(hap, &hap->long_freq_register1, QPNP_HAP_RATE_CFG1_REG(hap->base));
+		if (rc)
+			goto SPMI_ERROR;
+
+		
+		rc = qpnp_hap_read_reg(hap, &temp,
+			QPNP_HAP_RATE_CFG2_REG(hap->base));
+		if (rc < 0)
+			goto SPMI_ERROR;
+
+		
+		temp &= QPNP_HAP_RATE_CFG2_MASK;
+		hap->long_freq_register2 |= temp;
+
+		rc = qpnp_hap_write_reg(hap, &hap->long_freq_register2, QPNP_HAP_RATE_CFG2_REG(hap->base));
+		if (rc)
+			goto SPMI_ERROR;
+	} else {
+		rc = qpnp_hap_write_reg(hap, &hap->short_vol_register, QPNP_HAP_VMAX_REG(hap->base));
+		if (rc)
+			goto SPMI_ERROR;
+
+		rc = qpnp_hap_write_reg(hap, &hap->short_freq_register1, QPNP_HAP_RATE_CFG1_REG(hap->base));
+		if (rc)
+			goto SPMI_ERROR;
+
+		
+
+		rc = qpnp_hap_read_reg(hap, &tempCFG,
+			QPNP_HAP_RATE_CFG1_REG(hap->base));
+		if (rc < 0)
+			goto SPMI_ERROR;
+
+		rc = qpnp_hap_read_reg(hap, &temp,
+			QPNP_HAP_RATE_CFG2_REG(hap->base));
+		VIB_INFO_LOG("%s: CFG 1 = %x CFG 2 = %x\n", __func__, tempCFG, temp);
+
+		if (rc < 0)
+			goto SPMI_ERROR;
+		
+		temp &= QPNP_HAP_RATE_CFG2_MASK;
+		hap->short_freq_register2 |= temp;
+
+		rc = qpnp_hap_write_reg(hap, &hap->short_freq_register2, QPNP_HAP_RATE_CFG2_REG(hap->base));
+		if (rc)
+			goto SPMI_ERROR;
+	}
+
+	hap->last_set = vib_duration;
+	return rc;
+
+SPMI_ERROR:
+	hap->last_set = SPMI_WRITE_FAIL;
+	VIB_ERR_LOG("%s: Writing spmi error!\n", __func__);
+	return rc;
+}
+
 static int qpnp_hap_config(struct qpnp_hap *hap)
 {
-	u8 reg = 0, error_code = 0, unlock_val, error_value;
-	int rc, i, temp;
+	u8 reg = 0, error_code = 0, unlock_val, rc_clk_err_percent_x10;
+	u32 temp, temp2;
+	int rc, i;
 
 	
 	rc = qpnp_hap_read_reg(hap, &reg, QPNP_HAP_ACT_TYPE_REG(hap->base));
@@ -1797,7 +1915,14 @@ static int qpnp_hap_config(struct qpnp_hap *hap)
 
 	temp = hap->wave_play_rate_us / QPNP_HAP_RATE_CFG_STEP_US;
 
-	if ((hap->act_type == QPNP_HAP_LRA) && hap->correct_lra_drive_freq
+	if (hap->short_play_rate_us < QPNP_HAP_WAV_PLAY_RATE_US_MIN)
+		hap->short_play_rate_us = QPNP_HAP_WAV_PLAY_RATE_US_MIN;
+	else if (hap->short_play_rate_us > QPNP_HAP_WAV_PLAY_RATE_US_MAX)
+		hap->short_play_rate_us = QPNP_HAP_WAV_PLAY_RATE_US_MAX;
+
+	temp2 = hap->short_play_rate_us / QPNP_HAP_RATE_CFG_STEP_US;
+
+	if (hap->act_type == QPNP_HAP_LRA
 			&& hap->misc_trim_error_rc19p2_clk_reg_present) {
 		unlock_val = MISC_SEC_UNLOCK;
 		rc = spmi_ext_register_writel(hap->spmi->ctrl,
@@ -1810,15 +1935,23 @@ static int qpnp_hap_config(struct qpnp_hap *hap)
 		spmi_ext_register_readl(hap->spmi->ctrl, PMI8950_MISC_SID,
 			 MISC_TRIM_ERROR_RC19P2_CLK, &error_code, 1);
 
-		error_value = (error_code & 0x0F) * 7;
+		rc_clk_err_percent_x10 = (error_code & 0x0F) * 7;
 
-		if (error_code & 0x80)
-			temp = (temp * (1000 - error_value)) / 1000;
+		if (error_code >= 128)
+			temp = (temp * (1000 - rc_clk_err_percent_x10)) / 1000;
 		else
-			temp = (temp * (1000 + error_value)) / 1000;
+			temp = (temp * (1000 + rc_clk_err_percent_x10)) / 1000;
+
+		dev_dbg(&hap->spmi->dev,
+			"TRIM register = 0x%x Play rate code after RC clock correction 0x%x\n",
+					error_code, temp);
 	}
 
 	reg = temp & QPNP_HAP_RATE_CFG1_MASK;
+	hap->long_freq_register1 = reg;
+	hap->short_freq_register1 = temp2 & QPNP_HAP_RATE_CFG1_MASK;
+	hap->short_freq_register2 = temp2 >> QPNP_HAP_RATE_CFG2_SHFT;
+
 	rc = qpnp_hap_write_reg(hap, &reg,
 			QPNP_HAP_RATE_CFG1_REG(hap->base));
 	if (rc)
@@ -1828,9 +1961,12 @@ static int qpnp_hap_config(struct qpnp_hap *hap)
 			QPNP_HAP_RATE_CFG2_REG(hap->base));
 	if (rc < 0)
 		return rc;
+
 	reg &= QPNP_HAP_RATE_CFG2_MASK;
 	temp = temp >> QPNP_HAP_RATE_CFG2_SHFT;
+	hap->long_freq_register2 = temp;
 	reg |= temp;
+
 	rc = qpnp_hap_write_reg(hap, &reg,
 			QPNP_HAP_RATE_CFG2_REG(hap->base));
 	if (rc)
@@ -2004,6 +2140,19 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 		hap->misc_trim_error_rc19p2_clk_reg_present =
 				of_property_read_bool(spmi->dev.of_node,
 				"qcom,misc-trim-error-rc19p2-clk-reg-present");
+
+		if (hap->auto_res_mode == QPNP_HAP_AUTO_RES_QWD) {
+			hap->time_required_to_generate_back_emf_us =
+					QPNP_HAP_TIME_REQ_FOR_BACK_EMF_GEN;
+			rc = of_property_read_u32(spmi->dev.of_node,
+				"qcom,time-required-to-generate-back-emf-us",
+				&temp);
+			if (!rc)
+				hap->time_required_to_generate_back_emf_us =
+									temp;
+		} else {
+			hap->time_required_to_generate_back_emf_us = 0;
+		}
 	}
 
 	rc = of_property_read_string(spmi->dev.of_node,
@@ -2122,13 +2271,49 @@ static int qpnp_hap_parse_dt(struct qpnp_hap *hap)
 	hap->use_sc_irq = of_property_read_bool(spmi->dev.of_node,
 				"qcom,use-sc-irq");
 	if (hap->use_sc_irq) {
-		hap->sc_irq = spmi_get_irq_byname(hap->spmi,
+		rc = spmi_get_irq_byname(hap->spmi,
 					NULL, "sc-irq");
-		if (hap->sc_irq < 0) {
+		if (rc < 0) {
 			dev_err(&spmi->dev, "Unable to get sc irq\n");
-			return hap->sc_irq;
+			return rc;
+		}
+		hap->sc_irq = rc;
+	}
+
+	hap->short_duration = QPNP_HAP_SHORT_VIB_TIME;
+	hap->soft_mode_enable = of_property_read_bool(spmi->dev.of_node,
+				"htc,soft-mode-enable");
+
+	if(hap->soft_mode_enable) {
+		rc = of_property_read_u32(spmi->dev.of_node,
+			"htc,soft-mode-short-vib-vmax-mv", &temp);
+		if (!rc) {
+			hap->short_vmax = temp;
+		} else if (rc != -EINVAL) {
+			dev_err(&spmi->dev, "Unable to read short vmax\n");
+			return rc;
+		}
+
+		rc = of_property_read_u32(spmi->dev.of_node,
+			"htc,soft-mode-short-play-rate-us", &temp);
+		if (!rc) {
+			hap->short_play_rate_us = temp;
+		} else if (rc != -EINVAL) {
+			dev_err(&spmi->dev, "Unable to read short rate\n");
+			return rc;
+		}
+
+		rc = of_property_read_u32(spmi->dev.of_node,
+			"htc,soft-mode-vib-duration-ms", &temp);
+		if (!rc) {
+			hap->short_duration = temp;
+		} else if (rc != -EINVAL) {
+			dev_err(&spmi->dev, "Unable to read short time\n");
+			return rc;
 		}
 	}
+	if (of_find_property(spmi->dev.of_node, "vcc_pon-supply", NULL))
+		hap->manage_pon_supply = true;
 
 	return 0;
 }
@@ -2137,6 +2322,7 @@ static int qpnp_haptic_probe(struct spmi_device *spmi)
 {
 	struct qpnp_hap *hap;
 	struct resource *hap_resource;
+	struct regulator *vcc_pon;
 	int rc, i;
 
 	VIB_INFO_LOG("%s, ++++++++++++++++++++++\n", __func__);
@@ -2166,6 +2352,7 @@ static int qpnp_haptic_probe(struct spmi_device *spmi)
 		dev_err(&spmi->dev, "hap config failed\n");
 		return rc;
 	}
+	hap->last_set = LONG_DURATION;		
 
 	spin_lock_init(&hap->lock);
 	mutex_init(&hap->wf_lock);
@@ -2203,6 +2390,17 @@ static int qpnp_haptic_probe(struct spmi_device *spmi)
 			dev_err(&spmi->dev, "sysfs creation failed\n");
 			goto sysfs_fail;
 		}
+	}
+
+	if (hap->manage_pon_supply) {
+		vcc_pon = regulator_get(&spmi->dev, "vcc_pon");
+		if (IS_ERR(vcc_pon)) {
+			rc = PTR_ERR(vcc_pon);
+			dev_err(&spmi->dev,
+				"regulator get failed vcc_pon rc=%d\n", rc);
+			goto sysfs_fail;
+		}
+		hap->vcc_pon = vcc_pon;
 	}
 
 	ghap = hap;
@@ -2253,6 +2451,9 @@ static int qpnp_haptic_remove(struct spmi_device *spmi)
 #ifdef CONFIG_VIB_TRIGGERS
         vib_trigger_enabler_unregister(&hap->enabler);
 #endif
+	if (hap->vcc_pon)
+		regulator_put(hap->vcc_pon);
+
 	return 0;
 }
 

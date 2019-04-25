@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -10,6 +10,9 @@
  * GNU General Public License for more details.
  */
 
+/*
+ * Scheduler hook for average runqueue determination
+ */
 #include <linux/module.h>
 #include <linux/percpu.h>
 #include <linux/hrtimer.h>
@@ -28,6 +31,15 @@ static DEFINE_PER_CPU(unsigned long, iowait_prod_sum);
 static DEFINE_PER_CPU(spinlock_t, nr_lock) = __SPIN_LOCK_UNLOCKED(nr_lock);
 static s64 last_get_time;
 
+/**
+ * sched_get_nr_running_avg
+ * @return: Average nr_running, iowait and nr_big_tasks value since last poll.
+ *	    Returns the avg * 100 to return up to two decimal points
+ *	    of accuracy.
+ *
+ * Obtains the average nr_running value since the last poll.
+ * This function may not be called concurrently with itself
+ */
 u64 dbg_diff;
 u64 dbg_tmp_avg;
 u64 dbg_tmp_iowait;
@@ -47,23 +59,23 @@ void sched_get_nr_running_avg(int *avg, int *iowait_avg, int *big_avg)
 		return;
 	WARN((s64)diff<0, "[%s] time last:%llu curr:%llu ", __func__, last_get_time, curr_time);
 
-	
+	/* read and reset nr_running counts */
 	for_each_possible_cpu(cpu) {
 		unsigned long flags;
 
 		spin_lock_irqsave(&per_cpu(nr_lock, cpu), flags);
 		curr_time = sched_clock();
+		diff = curr_time - per_cpu(last_time, cpu);
+		BUG_ON((s64)diff < 0);
+
 		tmp_avg += per_cpu(nr_prod_sum, cpu);
-		tmp_avg += per_cpu(nr, cpu) *
-			(curr_time - per_cpu(last_time, cpu));
+		tmp_avg += per_cpu(nr, cpu) * diff;
 
 		tmp_big_avg += per_cpu(nr_big_prod_sum, cpu);
-		tmp_big_avg += nr_eligible_big_tasks(cpu) *
-			(curr_time - per_cpu(last_time, cpu));
+		tmp_big_avg += nr_eligible_big_tasks(cpu) * diff;
 
 		tmp_iowait += per_cpu(iowait_prod_sum, cpu);
-		tmp_iowait +=  nr_iowait_cpu(cpu) *
-			(curr_time - per_cpu(last_time, cpu));
+		tmp_iowait +=  nr_iowait_cpu(cpu) * diff;
 
 		per_cpu(last_time, cpu) = curr_time;
 
@@ -100,16 +112,26 @@ void sched_get_nr_running_avg(int *avg, int *iowait_avg, int *big_avg)
 }
 EXPORT_SYMBOL(sched_get_nr_running_avg);
 
+/**
+ * sched_update_nr_prod
+ * @cpu: The core id of the nr running driver.
+ * @delta: Adjust nr by 'delta' amount
+ * @inc: Whether we are increasing or decreasing the count
+ * @return: N/A
+ *
+ * Update average with latest nr_running value for CPU
+ */
 void sched_update_nr_prod(int cpu, long delta, bool inc)
 {
-	int diff;
-	s64 curr_time;
+	u64 diff;
+	u64 curr_time;
 	unsigned long flags, nr_running;
 
 	spin_lock_irqsave(&per_cpu(nr_lock, cpu), flags);
 	nr_running = per_cpu(nr, cpu);
 	curr_time = sched_clock();
 	diff = curr_time - per_cpu(last_time, cpu);
+	BUG_ON((s64)diff < 0);
 	per_cpu(last_time, cpu) = curr_time;
 	per_cpu(nr, cpu) = nr_running + (inc ? delta : -delta);
 

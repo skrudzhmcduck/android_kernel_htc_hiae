@@ -66,6 +66,11 @@ Optional properties:
 - qcom,mmss-phyreset-ctrl-offset:	Specifies the offset for dsi phy reset control register.
 - qcom,timing-db-mode:			Boolean specifies dsi timing mode registers are supported or not.
 - qcom,dsi-clk-ln-recovery:		Boolean which enables the clk lane recovery
+- qcom,split-dsi-independent-pll:	Boolean which specifies if the individual DSI controllers need to be
+					driven by respective DSI PLLs for split DSI use-cases which is required
+					on specific MSM revisions. This property supersedes the default configuration
+					of using a shared PLL for split DSI configuration and is not applicable to
+					single/dual DSI configurations.
 
 mdss-dsi-ctrl is a dsi controller device which is treated as a subnode of the mdss-dsi device.
 
@@ -110,6 +115,10 @@ Optional properties:
 					controller. These pin configurations are installed in the pinctrl
 					device node. Refer to pinctrl-bindings.txt
 - qcom,regulator-ldo-mode:		Boolean to enable ldo mode for the dsi phy regulator
+- qcom,null-insertion-enabled:		Boolean to enable NULL packet insertion
+					feature for DSI controller.
+- qcom,burst-feature-disabled:		Boolean to disable burst mode feature for DSI controller.
+					Default is enable.
 - qcom,dsi-irq-line:			Boolean specifies if DSI has a different irq line than mdp.
 - qcom,lane-map:			Specifies the data lane swap configuration.
 					"lane_map_0123" = <0 1 2 3> (default value)
@@ -137,6 +146,7 @@ Example:
 
 		qcom,timing-db-mode;
 		qcom,dsi-clk-ln-recovery;
+		qcom,split-dsi-independent-pll;
 
 		qcom,core-supply-entries {
 			#address-cells = <1>;
@@ -222,6 +232,7 @@ Example:
 			qcom,mmss-ulp-clamp-ctrl-offset = <0x20>;
 			qcom,mmss-phyreset-ctrl-offset = <0x24>;
 			qcom,regulator-ldo-mode;
+			qcom,null-insertion-enabled;
 
 			pinctrl-names = "mdss_default", "mdss_sleep";
 			pinctrl-0 = <&mdss_dsi_active>;

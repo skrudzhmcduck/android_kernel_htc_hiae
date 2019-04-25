@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014, 2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -133,7 +133,7 @@ static int mhi_buf_tbl_add(struct diag_mhi_info *mhi_info, int type,
 
 	item = kzalloc(sizeof(struct diag_mhi_buf_tbl_t), GFP_KERNEL);
 	if (!item) {
-		pr_err_ratelimited("diag: In %s, unable to allocate new item for buf tbl, ch: %p, type: %d, buf: %p, len: %d\n",
+		pr_err_ratelimited("diag: In %s, unable to allocate new item for buf tbl, ch: %pK, type: %d, buf: %pK, len: %d\n",
 				   __func__, ch, ch->type, buf, len);
 		return -ENOMEM;
 	}
@@ -187,7 +187,7 @@ static void mhi_buf_tbl_remove(struct diag_mhi_info *mhi_info, int type,
 	spin_unlock_irqrestore(&ch->lock, flags);
 
 	if (!found) {
-		pr_err_ratelimited("diag: In %s, unable to find buffer, ch: %p, type: %d, buf: %p\n",
+		pr_err_ratelimited("diag: In %s, unable to find buffer, ch: %pK, type: %d, buf: %pK\n",
 				   __func__, ch, ch->type, buf);
 	}
 }
@@ -202,9 +202,9 @@ static void mhi_buf_tbl_clear(struct diag_mhi_info *mhi_info)
 	if (!mhi_info)
 		return;
 
-	
+	/* Clear all the pending reads */
 	ch = &mhi_info->read_ch;
-	
+	/* At this point, the channel should already by closed */
 	if (!ch->opened) {
 		spin_lock_irqsave(&ch->lock, flags);
 		list_for_each_safe(start, temp, &ch->buf_tbl) {
@@ -218,9 +218,9 @@ static void mhi_buf_tbl_clear(struct diag_mhi_info *mhi_info)
 		spin_unlock_irqrestore(&ch->lock, flags);
 	}
 
-	
+	/* Clear all the pending writes */
 	ch = &mhi_info->write_ch;
-	
+	/* At this point, the channel should already by closed */
 	if (!ch->opened) {
 		spin_lock_irqsave(&ch->lock, flags);
 		list_for_each_safe(start, temp, &ch->buf_tbl) {
@@ -320,6 +320,11 @@ static int mhi_open(int id)
 
 	if (!diag_mhi[id].enabled)
 		return -ENODEV;
+	/*
+	 * This function is called whenever the channel needs to be opened
+	 * explicitly by Diag. Open both the read and write channels (denoted by
+	 * OPEN_CHANNELS flag)
+	 */
 	return __mhi_open(&diag_mhi[id], OPEN_CHANNELS);
 }
 
@@ -328,6 +333,11 @@ static void mhi_open_work_fn(struct work_struct *work)
 	struct diag_mhi_info *mhi_info = container_of(work,
 						      struct diag_mhi_info,
 						      open_work);
+	/*
+	 * This is a part of work function which is queued after the channels
+	 * are explicitly opened. Do not open channels again (denoted by
+	 * CHANNELS_OPENED flag)
+	 */
 	if (mhi_info)
 		__mhi_open(mhi_info, CHANNELS_OPENED);
 }
@@ -433,7 +443,7 @@ static int mhi_write(int id, unsigned char *buf, int len, int ctxt)
 	}
 
 	if (!buf || len <= 0) {
-		pr_err("diag: In %s, ch %d, invalid buf %p len %d\n",
+		pr_err("diag: In %s, ch %d, invalid buf %pK len %d\n",
 			__func__, id, buf, len);
 		return -EINVAL;
 	}
@@ -463,7 +473,7 @@ static int mhi_write(int id, unsigned char *buf, int len, int ctxt)
 
 	err = mhi_queue_xfer(ch->hdl, dma_addr, len, flags);
 	if (err) {
-		pr_err_ratelimited("diag: In %s, cannot write to MHI channel %p, len %d, err: %d\n",
+		pr_err_ratelimited("diag: In %s, cannot write to MHI channel %pK, len %d, err: %d\n",
 				   __func__, diag_mhi[id].name, len, err);
 		dma_unmap_single(NULL, (dma_addr_t)dma_addr, len,
 				 DMA_TO_DEVICE);
@@ -553,6 +563,11 @@ static void mhi_notifier(struct mhi_cb_info *cb_info)
 			   &(diag_mhi[index].close_work));
 		break;
 	case MHI_CB_XFER:
+		/*
+		 * If the channel is a read channel, this is a read
+		 * complete notification - write complete if the channel is
+		 * a write channel.
+		 */
 		if (type == TYPE_MHI_READ_CH) {
 			queue_work(diag_mhi[index].mhi_wq,
 				   &(diag_mhi[index].read_done_work));

@@ -729,7 +729,6 @@ static void mic_detect_work_func(struct work_struct *work)
 			if (hs_mgr_notifier.hs_insert)
 				hs_mgr_notifier.hs_insert(1);
 #endif
-			new_state |= old_state;
 		}
 		else {
 			new_state = 0;
@@ -738,8 +737,6 @@ static void mic_detect_work_func(struct work_struct *work)
 				hs_mgr_notifier.hs_insert(0);
 #endif
 		}
-#else
-		new_state |= old_state;
 #endif
 		switch_set_state(&hi->sdev_h2w, new_state);
 		HS_LOG_TIME("Sent uevent 0x%x ==> 0x%x", old_state, new_state);

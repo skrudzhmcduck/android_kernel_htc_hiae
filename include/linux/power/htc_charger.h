@@ -14,6 +14,10 @@
 #define __HTC_CHARGER_H__
 
 
+#ifdef CONFIG_MACH_DUMMY
+#define CONFIG_HTC_BATT_WA_PCN0018 
+#endif
+
 enum htc_charger_event {
 	HTC_CHARGER_EVENT_READY = 0,
 	HTC_CHARGER_EVENT_VBUS_OUT,
@@ -39,6 +43,8 @@ enum htc_charger_event {
 	HTC_CHARGER_EVENT_SRC_MHL_900MA,
 	HTC_CHARGER_EVENT_SRC_MHL_1500MA,
 	HTC_CHARGER_EVENT_SRC_MHL_2000MA,
+	HTC_CHARGER_EVENT_SRC_HVDCP,
+	HTC_CHARGER_EVENT_BAD_CABLE,
 };
 
 enum htc_charging_cfg {
@@ -136,6 +142,9 @@ struct htc_charger {
 	int (*get_charging_enabled)(int *result);
 	int (*event_notify)(enum htc_extchg_event_type etype);
 	int (*set_charger_enable)(bool enable);
+#ifdef CONFIG_HTC_BATT_WA_PCN0018
+	int (*set_charger_after_eoc)(bool enable);
+#endif
 	int (*set_pwrsrc_enable)(bool enable);
 	int (*set_pwrsrc_and_charger_enable)
 			(enum htc_power_source_type src,
@@ -185,11 +194,33 @@ struct htc_charger {
 	int (*set_otg_pulse_skip)(int val);
 	int (*get_otg_pulse_skip)(void);
 	int (*get_vbus)(int *result);
+	int (*get_usb_type)(int *result);
 	int (*get_max_iusb)(int *result);
 	int (*get_AICL)(int *result);
+
+	int (*set_system_temp_level)(int val);
+	int (*get_system_temp_level)(void);
+
+	int (*get_input_current_max)(void);
+
+	int (*set_dp_dm)(int val);
+	int (*get_dp_dm)(void);
+
+	int (*get_input_current_limited)(void);
+
+	int (*set_rerun_aicl)(int val);
+	int (*get_rerun_aicl)(void);
+	int (*is_bad_cable_used)(int *result);
+	int (*is_quick_charger_used)(bool *result);
+	#ifdef CONFIG_HTC_CHARGER
+	int (*set_htcchg_ext_property)(struct power_supply *psy, enum power_supply_property prop, const union power_supply_propval *val);
+	int (*get_htcchg_ext_property)(const enum power_supply_property prop);
+	#endif
 };
 
 int htc_charger_event_notify(enum htc_charger_event);
 int usb_type_event_notify(int result);
+
+void htc_is_rerun_apsd(bool is_rerun);
 
 #endif

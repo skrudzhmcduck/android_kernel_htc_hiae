@@ -260,27 +260,49 @@ void set_acpuclk_l2_freq_footprint_by_clk(enum FREQ_TYPE type, struct clk* c, un
 	set_acpuclk_l2_freq_footprint(type, khz);
 }
 
-void init_cpu_foot_print(unsigned cpu, bool from_idle, bool notify_rpm)
+void inc_kernel_exit_counter_from_pc(unsigned cpu)
 {
-	unsigned state = CPU_FOOT_PRINT_MAGIC_HOTPLUG;
-	bool is_spc = !notify_rpm;
-	bool not_hotplug = !cpu || from_idle;
+	unsigned int counter;
+	if (unlikely(cpu >= NR_CPUS)) {
+		WARN(1, "Only %d cores, but try to increase kernel exit counter from PC for core %d\n",
+				NR_CPUS, cpu);
+		return;
+	}
+
+	counter = MNEMOSYNE_GET_I(kernel_exit_counter_from_cpu, S2H(cpu)) + 1;
+	MNEMOSYNE_SET_I(kernel_exit_counter_from_cpu, S2H(cpu), counter);
+	mb();
+}
+
+void init_cpu_foot_print(unsigned cpu, bool from_idle, bool is_pc)
+{
+	unsigned state;
 
 	if (unlikely(cpu >= NR_CPUS)) {
 		WARN(1, "Only %d cores, but try to set footprint for core %d\n", NR_CPUS, cpu);
 		return;
 	}
 
-	if (not_hotplug) {
-		if (is_spc)
-			state = (from_idle) ? CPU_FOOT_PRINT_MAGIC_SPC_FROM_IDLE : CPU_FOOT_PRINT_MAGIC_SPC;
-		else
-			state = (from_idle) ? CPU_FOOT_PRINT_MAGIC_FROM_IDLE : CPU_FOOT_PRINT_MAGIC;
-	}
+	if (!is_pc)
+		state = (from_idle) ? CPU_FOOT_PRINT_MAGIC_WFI_RET_FROM_IDLE : CPU_FOOT_PRINT_MAGIC_WFI_RET;
+	else
+		state = (from_idle) ? CPU_FOOT_PRINT_MAGIC_FROM_IDLE : CPU_FOOT_PRINT_MAGIC;
 
 	MNEMOSYNE_SET_I(kernel_footprint_cpu, S2H(cpu), state);
 	mb();
 }
+
+void init_cpu_hotplug_foot_print(unsigned cpu)
+{
+        if (unlikely(cpu >= NR_CPUS)) {
+                WARN(1, "Only %d cores, but try to set footprint for core %d\n", NR_CPUS, cpu);
+                return;
+        }
+
+        MNEMOSYNE_SET_I(kernel_footprint_cpu, S2H(cpu), CPU_FOOT_PRINT_MAGIC_HOTPLUG);
+        mb();
+}
+
 
 void set_cpu_foot_print(unsigned cpu, unsigned state)
 {

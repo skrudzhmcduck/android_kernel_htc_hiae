@@ -35,9 +35,9 @@
 };
 
 &i2c_5 { /* BLSP2 QUP1 */
-	nq@2b {
+	nq@28 {
 		compatible = "qcom,nq-nci";
-		reg = <0x2b>;
+		reg = <0x28>;
 		qcom,nq-irq = <&msm_gpio 17 0x00>;
 		qcom,nq-ven = <&msm_gpio 16 0x00>;
 		qcom,nq-firm = <&pm8950_gpios 5 0x00>;
@@ -93,7 +93,7 @@
                 pinctrl-5         = <&fpc1020_cs_high>;
 	};
 
-	//Fingerprint for REE version
+	//Fingerprint for MFG version
 /*
 	spi@78B5000 {
 		status = "ok";
@@ -112,6 +112,51 @@
 			pinctrl-1         = <&fpc1020_reset_active>;
                  };
 
+	};
+*/
+
+/*
+    //Fingerprint for REE version
+	spi@78B5000 {
+		status = "ok";
+		fpc1020@1 {
+			status = "ok";
+			reg               = <0>; //CS ID
+			l22-supply 	  = <&pm8950_l22>;
+			compatible = "fpc,fpc1020";
+			input-device-name = "fpc1020";
+			interrupt-parent  = <&msm_gpio>;
+			interrupts        = <46 0x0>;
+			fpc,gpio_rst = <&msm_gpio 47 0>;
+			fpc,gpio_irq = <&msm_gpio 46 0>;
+			fpc,gpio_cs0    = <&msm_gpio 2 0>;
+			fpc,use_fpc2050 = <1>;
+			fpc,enable-on-boot;
+			/delete-property/ fpc,enable-wakeup;
+			// EV_MSC, MSC_SCAN
+			fpc,event-type = <4>;
+			fpc,event-code = <4>;
+
+			fpc,spi-freq-khz = <4800>;
+			spi-max-frequency = <4800000>;
+			spi-qup-id = <1>;
+
+			pinctrl-names = "fpc1020_spi_active",
+					"fpc1020_reset_reset",
+					"fpc1020_reset_active",
+					"fpc1020_cs_low",
+					"fpc1020_cs_high",
+					"fpc1020_cs_active",
+					"fpc1020_irq_active";
+
+			pinctrl-0 = <&fpc1020_spi_active>;
+			pinctrl-1 = <&fpc1020_reset_reset>;
+			pinctrl-2 = <&fpc1020_reset_active>;
+			pinctrl-3 = <&fpc1020_cs_low>;
+			pinctrl-4 = <&fpc1020_cs_high>;
+			pinctrl-5 = <&fpc1020_cs_active>;
+			pinctrl-6 = <&fpc1020_irq_active>;
+		};
 	};
 */
 

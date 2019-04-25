@@ -1036,10 +1036,6 @@ static int do_umount(struct mount *mnt, int flags)
 	}
 	br_write_unlock(&vfsmount_lock);
 	namespace_unlock();
-
-	pr_info("pid:%d(%s)(parent:%d/%s)  (%s) umounted filesystem.\n",
-			current->pid, current->comm, current->parent->pid,
-			current->parent->comm, sb->s_id);
 	return retval;
 }
 
@@ -1681,8 +1677,10 @@ static int do_new_mount(struct path *path, const char *fstype, int flags,
 
 	
 	if (!err && !strcmp(fstype, "ext4") &&
-	    !strcmp(path->dentry->d_name.name, "data"))
+	    !strcmp(path->dentry->d_name.name, "data")) {
 		mnt->mnt_sb->fsync_flags |= FLAG_ASYNC_FSYNC;
+		mnt->mnt_sb->s_flags |= MS_EMERGENCY_RO;
+	}
 
 	return err;
 }

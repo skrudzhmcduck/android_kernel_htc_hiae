@@ -127,7 +127,7 @@ static void msm_vb2_buf_cleanup(struct vb2_buffer *vb)
 
 	stream = msm_get_stream_from_vb2q(vb->vb2_queue);
 	if (!stream) {
-		pr_err("%s:%d] NULL stream", __func__, __LINE__);
+		pr_err_ratelimited("%s:%d] NULL stream", __func__, __LINE__);
 		return;
 	}
 
@@ -241,7 +241,7 @@ static int msm_vb2_put_buf(struct vb2_buffer *vb, int session_id,
 				break;
 		}
 		if (vb2_buf != vb) {
-			pr_err("VB buffer is INVALID vb=%p, ses_id=%d, str_id=%d\n",
+			pr_err("VB buffer is INVALID vb=%pK, ses_id=%d, str_id=%d\n",
 					vb, session_id, stream_id);
 			spin_unlock_irqrestore(&stream->stream_lock, flags);
 			return -EINVAL;
@@ -282,7 +282,7 @@ static int msm_vb2_buf_done(struct vb2_buffer *vb, int session_id,
 				break;
 		}
 		if (vb2_buf != vb) {
-			pr_err("VB buffer is INVALID ses_id=%d, str_id=%d, vb=%p\n",
+			pr_err("VB buffer is INVALID ses_id=%d, str_id=%d, vb=%pK\n",
 				    session_id, stream_id, vb);
 			spin_unlock_irqrestore(&stream->stream_lock, flags);
 			return -EINVAL;

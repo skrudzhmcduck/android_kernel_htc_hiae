@@ -827,8 +827,6 @@ static enum handoff mux_div_clk_handoff(struct clk *c)
 	unsigned int numer;
 
 	parent_rate = clk_get_rate(c->parent);
-	if (!parent_rate)
-		return HANDOFF_DISABLED_CLK;
 	numer = md->data.is_half_divider ? 2 : 1;
 
 	if (md->data.div) {
@@ -838,10 +836,11 @@ static enum handoff mux_div_clk_handoff(struct clk *c)
 		return HANDOFF_DISABLED_CLK;
 	}
 
-	if (!md->ops->is_enabled)
-		return HANDOFF_DISABLED_CLK;
-	if (md->ops->is_enabled(md))
-		return HANDOFF_ENABLED_CLK;
+	if (md->en_mask && md->ops && md->ops->is_enabled)
+		return md->ops->is_enabled(md)
+			? HANDOFF_ENABLED_CLK
+			: HANDOFF_DISABLED_CLK;
+
 	return HANDOFF_DISABLED_CLK;
 }
 

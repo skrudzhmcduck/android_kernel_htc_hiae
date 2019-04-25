@@ -16,6 +16,8 @@
 #include <linux/debugfs.h>
 #include <linux/sched.h>
 #include <net/htc_net_debug.h>
+#include <linux/slab.h>
+
 #if 0
 #include <linux/ipc_logging.h>
 #endif
@@ -26,6 +28,7 @@ int htc_net_debug_print = 0;
 
 #define DBG_MSG_LEN   128UL
 #define DBG_MAX_MSG   256UL
+#define DBG_ONELINE_MAX_MSG   30UL
 #define TIME_BUF_LEN  20
 
 static int htc_net_debug_dump_lines = DBG_MAX_MSG;
@@ -50,6 +53,15 @@ static struct {
 	unsigned idx;
 	rwlock_t lock;
 } net_debug = {
+	.idx = 0,
+	.lock = __RW_LOCK_UNLOCKED(lock)
+};
+
+static struct {
+	char (buf[DBG_ONELINE_MAX_MSG])[DBG_MSG_LEN]; 
+	unsigned idx;
+	rwlock_t lock;
+} net_debug_oneline = {
 	.idx = 0,
 	.lock = __RW_LOCK_UNLOCKED(lock)
 };
@@ -198,8 +210,87 @@ static int net_events_open(struct inode *inode, struct file *f)
 	return single_open(f, net_events_show, inode->i_private);
 }
 
+
+void net_dbg_log_event_oneline(int idx, const char * event, ...)
+{
+	unsigned long flags;
+	char tbuf[TIME_BUF_LEN];
+	char dbg_buff[DBG_MSG_LEN];
+	va_list arg_list;
+
+	if ( !htc_net_debug_enable ||
+		idx >=  DBG_ONELINE_MAX_MSG ||
+		idx < 0 ||
+		net_debug_oneline.buf[idx] == NULL)
+	{
+		return; 
+	}
+
+	va_start(arg_list, event);
+	vsnprintf(dbg_buff, DBG_MSG_LEN, event, arg_list);
+	va_end(arg_list);
+
+	write_lock_irqsave(&net_debug_oneline.lock, flags);
+
+	scnprintf(net_debug_oneline.buf[idx], DBG_MSG_LEN,
+		"%s%s", net_get_timestamp(tbuf), dbg_buff);
+
+	if (htc_net_debug_print)
+		pr_info("%s\n", dbg_buff);
+	write_unlock_irqrestore(&net_debug_oneline.lock, flags);
+
+	return;
+
+}
+EXPORT_SYMBOL(net_dbg_log_event_oneline);
+
+int net_dbg_get_free_log_event_oneline(void)
+{
+	unsigned long	flags;
+	int ret = -1;
+
+	write_lock_irqsave(&net_debug_oneline.lock, flags);
+	if (net_debug_oneline.idx < DBG_ONELINE_MAX_MSG) {
+		ret = net_debug_oneline.idx;
+		net_debug_oneline.idx++;
+	}
+	write_unlock_irqrestore(&net_debug_oneline.lock, flags);
+
+	return ret;
+}
+EXPORT_SYMBOL(net_dbg_get_free_log_event_oneline);
+
+static int net_events_oneline_show(struct seq_file *s, void *unused)
+{
+	unsigned long	flags;
+	unsigned	i;
+
+	read_lock_irqsave(&net_debug_oneline.lock, flags);
+	for (i = 0; i < net_debug_oneline.idx; i++) {
+		seq_printf(s, "%s\n", net_debug_oneline.buf[i]);
+	}
+	read_unlock_irqrestore(&net_debug_oneline.lock, flags);
+
+	return 0;
+}
+
+
+static int net_events_oneline_open(struct inode *inode, struct file *f)
+{
+	return single_open(f, net_events_oneline_show, inode->i_private);
+}
+
+
 const struct file_operations net_dbg_op = {
 	.open = net_events_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+
+const struct file_operations net_dbg_oneline_op = {
+	.open = net_events_oneline_open,
 	.read = seq_read,
 	.llseek = seq_lseek,
 	.release = single_release,
@@ -213,6 +304,7 @@ static int __init htc_net_debug_init(void)
 	dent = debugfs_create_dir("htc_net", 0);
 	if (!IS_ERR(dent)) {
 		debugfs_create_file("dumplog", S_IRUGO, dent, NULL, &net_dbg_op);
+		debugfs_create_file("dumplog_oneline", S_IRUGO, dent, NULL, &net_dbg_oneline_op);
 	}
 #endif
    pr_info("[NET]%s start.\n", __func__);

@@ -87,6 +87,7 @@ struct sdhci_msm_pltfm_data {
 	bool nonremovable;
 	bool use_mod_dynamic_qos;
 	bool nonhotplug;
+	bool broken_pwr_cycle_host;
 	bool no_1p8v;
 	bool pin_cfg_sts;
 	struct sdhci_msm_pin_data *pin_data;
@@ -106,6 +107,7 @@ struct sdhci_msm_pltfm_data {
 	unsigned char sup_ice_clk_cnt;
 	u32 ice_clk_max;
 	u32 ice_clk_min;
+	bool core_3_0v_support;
 };
 
 struct sdhci_msm_bus_vote {
@@ -120,7 +122,6 @@ struct sdhci_msm_bus_vote {
 
 struct sdhci_msm_ice_data {
 	struct qcom_ice_variant_ops *vops;
-	struct completion async_done;
 	struct platform_device *pdev;
 	int state;
 };
@@ -160,5 +161,7 @@ struct sdhci_msm_host {
 	enum dev_state mmc_dev_state;
 	struct sdhci_msm_ice_data ice;
 	u32 ice_clk_rate;
+	bool enhanced_strobe;
+	bool tuning_in_progress;
 };
 #endif 

@@ -78,6 +78,11 @@ static void init_from_device_tree(void)
 	if(property_size > sizeof(htc_msm_serial_num))
 		return;
 
+	if (NULL == data)
+	{
+		SECMSG("of_get_property fail(%p)\n", data);
+		return;
+	}
 	SECMSG("%s - LABEL_MSM_SERIAL_NUM: %s\n", __func__, data);
 	memcpy(htc_msm_serial_num, data, sizeof(htc_msm_serial_num));
 

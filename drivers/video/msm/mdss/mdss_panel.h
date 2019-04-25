@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -130,6 +130,11 @@ struct mdss_panel_cfg {
 #define MDP_INTF_DSI_CMD_FIFO_UNDERFLOW		0x0001
 #define MDP_INTF_DSI_VIDEO_FIFO_OVERFLOW	0x0002
 
+
+enum {
+	MDP_INTF_CALLBACK_DSI_WAIT,
+};
+
 struct mdss_intf_recovery {
 	void (*fxn)(void *ctx, int event);
 	void *data;
@@ -157,6 +162,7 @@ enum mdss_intf_events {
 	MDSS_EVENT_DSI_STREAM_SIZE,
 	MDSS_EVENT_DSI_UPDATE_PANEL_DATA,
 	MDSS_EVENT_REGISTER_RECOVERY_HANDLER,
+	MDSS_EVENT_REGISTER_MDP_CALLBACK,
 	MDSS_EVENT_DSI_PANEL_STATUS,
 	MDSS_EVENT_DSI_DYNAMIC_SWITCH,
 	MDSS_EVENT_DSI_RECONFIG_CMD,
@@ -257,6 +263,7 @@ struct mipi_panel_info {
 	char lp11_init;
 	u32  init_delay;
 	u32  post_init_delay;
+	bool deferred_rst_off;
 };
 
 struct edp_panel_info {
@@ -442,7 +449,6 @@ struct mdss_panel_info {
 	u32 partial_update_roi_merge;
 	struct ion_handle *splash_ihdl;
 	int panel_power_state;
-	int blank_state;
 	int compression_mode;
 
 	uint32_t panel_dead;
@@ -475,7 +481,6 @@ struct mdss_panel_info {
 	struct mdss_panel_debugfs_info *debugfs_info;
 
 	int first_power_on;
-	int panel_id;
 	int camera_blk;
 	u32 mdss_pp_hue;
 	
@@ -484,6 +489,8 @@ struct mdss_panel_info {
 	u32 pcc_g;
 	u32 pcc_b;
 	bool blk_pending_display_on;
+	u32 mdss_lab_voltage;
+	u32 mdss_ibb_voltage;
 };
 
 struct mdss_panel_data {
@@ -500,6 +507,7 @@ struct mdss_panel_data {
 
 struct mdss_panel_debugfs_info {
 	struct dentry *root;
+	struct dentry *parent;
 	struct mdss_panel_info panel_info;
 	u32 override_flag;
 	struct mdss_panel_debugfs_info *next;
@@ -601,6 +609,29 @@ static inline bool mdss_panel_is_power_on_lp(int panel_power_state)
 static inline bool mdss_panel_is_power_on_ulp(int panel_power_state)
 {
 	return panel_power_state == MDSS_PANEL_POWER_LP2;
+}
+
+static inline u8 mdss_panel_calc_frame_rate(struct mdss_panel_info *pinfo)
+{
+		u32 pixel_total = 0;
+		u8 frame_rate = 0;
+
+		pixel_total = (pinfo->lcdc.h_back_porch +
+			  pinfo->lcdc.h_front_porch +
+			  pinfo->lcdc.h_pulse_width +
+			  pinfo->xres) *
+			 (pinfo->lcdc.v_back_porch +
+			  pinfo->lcdc.v_front_porch +
+			  pinfo->lcdc.v_pulse_width +
+			  pinfo->yres);
+
+		if (pinfo->clk_rate && pixel_total)
+			frame_rate = DIV_ROUND_CLOSEST(pinfo->clk_rate,
+								pixel_total);
+		else
+			frame_rate = DEFAULT_FRAME_RATE;
+
+		return frame_rate;
 }
 
 struct mdss_panel_cfg *mdss_panel_intf_type(int intf_val);

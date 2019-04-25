@@ -320,6 +320,14 @@ static int __init smsm_debugfs_init(void)
 	debug_create("state", 0444, dent, debug_read_smsm_state);
 	debug_create("intr_mask", 0444, dent, debug_read_intr_mask);
 	debug_create("smsm_test", 0444, dent, debug_test_smsm);
+#ifdef CONFIG_HTC_DEBUG_RIL_PCN0005_HTC_DUMP_SMSM_LOG
+#ifdef CONFIG_DEBUG_FS
+	do {
+		extern int smsm_dumplog_debugfs_init(struct dentry *);
+		smsm_dumplog_debugfs_init(dent);
+	} while(0);
+#endif//CONFIG_DEBUG_FS
+#endif//CONFIG_HTC_DEBUG_RIL_PCN0005_HTC_DUMP_SMSM_LOG
 
 	init_completion(&smsm_cb_completion);
 

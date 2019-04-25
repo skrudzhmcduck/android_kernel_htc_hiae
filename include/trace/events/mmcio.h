@@ -38,6 +38,50 @@ TRACE_EVENT(sys_sync_done,
 	TP_printk("[%s]", __entry->comm)
 );
 
+DECLARE_EVENT_CLASS(readpage_ops,
+	TP_PROTO(char *path, int size),
+
+	TP_ARGS(path, size),
+
+	TP_STRUCT__entry(
+		__field(unsigned, pid)
+		__field(int, size)
+		__array( char,		comm,	TASK_COMM_LEN	)
+		__array( char,		path,	256	)
+	),
+
+	TP_fast_assign(
+		__entry->pid		= current->pid;
+		__entry->size = size;
+		memcpy(__entry->comm, current->comm, TASK_COMM_LEN);
+		strncpy(__entry->path, path, 256);
+	),
+
+	TP_printk("file %s pages %d [%s:%u]",
+		__entry->path, __entry->size, __entry->comm, __entry->pid)
+);
+
+DEFINE_EVENT(readpage_ops, ext4_read_page,
+
+	TP_PROTO(char *path, int size),
+
+	TP_ARGS(path, size)
+);
+
+DEFINE_EVENT(readpage_ops, fuse_read_page,
+
+	TP_PROTO(char *path, int size),
+
+	TP_ARGS(path, size)
+);
+
+DEFINE_EVENT(readpage_ops, readahead,
+
+	TP_PROTO(char *path, int size),
+
+	TP_ARGS(path, size)
+);
+#if 0
 TRACE_EVENT(readahead,
 	TP_PROTO(struct file *file, int size),
 
@@ -64,7 +108,7 @@ TRACE_EVENT(readahead,
 		MAJOR(__entry->dev), MINOR(__entry->dev),
 		__get_str(name), __entry->size, __entry->comm, __entry->pid)
 );
-
+#endif
 DECLARE_EVENT_CLASS(file_op,
 	TP_PROTO(struct file *file),
 
@@ -114,27 +158,29 @@ DEFINE_EVENT(file_op, vfs_fsync_done,
 
 TRACE_EVENT(mmc_req_start,
 
-	TP_PROTO(struct device *dev, int opcode, unsigned start,  int blocks),
+	TP_PROTO(struct device *dev, int opcode, unsigned start,  int blocks, u8 tag),
 
-	TP_ARGS(dev, opcode, start, blocks),
+	TP_ARGS(dev, opcode, start, blocks, tag),
 
 	TP_STRUCT__entry(
 		__array(char, host, 6)
 		__field(int, opcode)
 		__field(unsigned, start)
 		__field(int, blocks)
+		__field(u8, tag)
 	),
 
 	TP_fast_assign(
 		__entry->opcode = opcode;
 		__entry->start = start;
 		__entry->blocks = blocks;
+		__entry->tag = tag;
 		strncpy(__entry->host, dev_name(dev), 6);
 	),
 
-	TP_printk("%s: CMD%d start %u blocks %d",
+	TP_printk("%s: CMD%d start %u blocks %d, tag %u",
 		__entry->host, __entry->opcode,
-		__entry->start, __entry->blocks)
+		__entry->start, __entry->blocks, __entry->tag)
 );
 
 TRACE_EVENT(mmc_req_end,
@@ -158,9 +204,9 @@ TRACE_EVENT(mmc_req_end,
 
 TRACE_EVENT(mmc_request_done,
 
-	TP_PROTO(struct device *dev, int opcode, unsigned start,  int blocks,  s64 time),
+	TP_PROTO(struct device *dev, int opcode, unsigned start,  int blocks,  s64 time, u8 tag),
 
-	TP_ARGS(dev, opcode, start, blocks, time),
+	TP_ARGS(dev, opcode, start, blocks, time, tag),
 
 	TP_STRUCT__entry(
 		__array(char, host, 6)
@@ -168,6 +214,7 @@ TRACE_EVENT(mmc_request_done,
 		__field(unsigned, start)
 		__field(int, blocks)
 		__field(s64, time)
+		__field(u8, tag)
 	),
 
 	TP_fast_assign(
@@ -175,12 +222,13 @@ TRACE_EVENT(mmc_request_done,
 		__entry->start = start;
 		__entry->blocks = blocks;
 		__entry->time = time;
+		__entry->tag = tag;
 		strncpy(__entry->host, dev_name(dev), 6);
 	),
 
-	TP_printk("%s: CMD%d start %u blocks %d, %lldms",
+	TP_printk("%s: CMD%d start %u blocks %d, %lldms, tag %u",
 		__entry->host, __entry->opcode,
-		__entry->start, __entry->blocks, __entry->time)
+		__entry->start, __entry->blocks, __entry->time, __entry->tag)
 );
 
 DECLARE_EVENT_CLASS(file_write_op,

@@ -38,7 +38,5 @@ void __diagfwd_dbg_raw_data(void *buf, const char *src, unsigned dbg_flag, unsig
 	}
 	if (diag7k_debug_mask || diag9k_debug_mask)
 		print_hex_dump(KERN_INFO, reason_str, DUMP_PREFIX_ADDRESS, 16, 1, buf, 16, 1);
-	else
-		print_hex_dump(KERN_DEBUG, reason_str, DUMP_PREFIX_ADDRESS, 16, 1, buf, 16, 1);
 }
 

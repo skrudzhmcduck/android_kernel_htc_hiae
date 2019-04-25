@@ -1379,6 +1379,13 @@ static int tomtom_mad_input_put(struct snd_kcontrol *kcontrol,
 	tomtom_mad_input = ucontrol->value.integer.value[0];
 	micb_4_int_reg = tomtom->resmgr.reg_addr->micb_4_int_rbias;
 
+	if (tomtom_mad_input >= ARRAY_SIZE(tomtom_conn_mad_text)) {
+		dev_err(codec->dev,
+			"%s: tomtom_mad_input = %d out of bounds\n",
+			__func__, tomtom_mad_input);
+		return -EINVAL;
+	}
+
 	pr_debug("%s: tomtom_mad_input = %s\n", __func__,
 			tomtom_conn_mad_text[tomtom_mad_input]);
 
@@ -5570,7 +5577,7 @@ static int tomtom_set_channel_map(struct snd_soc_dai *dai,
 	struct tomtom_priv *tomtom = snd_soc_codec_get_drvdata(dai->codec);
 	struct wcd9xxx *core = dev_get_drvdata(dai->codec->dev->parent);
 	if (!tx_slot || !rx_slot) {
-		pr_err("%s: Invalid tx_slot=%p, rx_slot=%p\n",
+		pr_err("%s: Invalid tx_slot=%pK, rx_slot=%pK\n",
 			__func__, tx_slot, rx_slot);
 		return -EINVAL;
 	}
@@ -5606,7 +5613,7 @@ static int tomtom_get_channel_map(struct snd_soc_dai *dai,
 	case AIF2_PB:
 	case AIF3_PB:
 		if (!rx_slot || !rx_num) {
-			pr_err("%s: Invalid rx_slot %p or rx_num %p\n",
+			pr_err("%s: Invalid rx_slot %pK or rx_num %pK\n",
 				 __func__, rx_slot, rx_num);
 			return -EINVAL;
 		}
@@ -5625,7 +5632,7 @@ static int tomtom_get_channel_map(struct snd_soc_dai *dai,
 	case AIF4_VIFEED:
 	case AIF4_MAD_TX:
 		if (!tx_slot || !tx_num) {
-			pr_err("%s: Invalid tx_slot %p or tx_num %p\n",
+			pr_err("%s: Invalid tx_slot %pK or tx_num %pK\n",
 				 __func__, tx_slot, tx_num);
 			return -EINVAL;
 		}
@@ -6286,7 +6293,8 @@ static int tomtom_codec_enable_slim_chmask(struct wcd9xxx_codec_dai_data *dai,
 					 msecs_to_jiffies(
 						TOMTOM_SLIM_CLOSE_TIMEOUT));
 		if (!ret) {
-			pr_err("%s: Slim close tx/rx wait timeout\n", __func__);
+			pr_err("%s: Slim close tx/rx wait timeout, ch_mask:0x%lx\n",
+				__func__, dai->ch_mask);
 			ret = -ETIMEDOUT;
 		} else {
 			ret = 0;
@@ -6335,6 +6343,41 @@ static void tomtom_codec_enable_int_port(struct wcd9xxx_codec_dai_data *dai,
 	}
 }
 
+static int tomtom_codec_slim_reserve_bw(struct snd_soc_codec *codec,
+		u32 bw_ops, bool commit)
+{
+	struct wcd9xxx *wcd9xxx;
+	if (!codec) {
+		pr_err("%s: Invalid handle to codec\n",
+			__func__);
+		return -EINVAL;
+	}
+
+	wcd9xxx = dev_get_drvdata(codec->dev->parent);
+
+	if (!wcd9xxx) {
+		dev_err(codec->dev, "%s: Invalid parent drv_data\n",
+			__func__);
+		return -EINVAL;
+	}
+
+	return wcd9xxx_slim_reserve_bw(wcd9xxx, bw_ops, commit);
+}
+
+static int tomtom_codec_vote_max_bw(struct snd_soc_codec *codec,
+			bool vote)
+{
+	u32 bw_ops;
+
+	if (vote)
+		bw_ops = SLIM_BW_CLK_GEAR_9;
+	else
+		bw_ops = SLIM_BW_UNVOTE;
+
+	return tomtom_codec_slim_reserve_bw(codec,
+			bw_ops, true);
+}
+
 static int tomtom_codec_enable_slimrx(struct snd_soc_dapm_widget *w,
 				     struct snd_kcontrol *kcontrol,
 				     int event)
@@ -6369,20 +6412,20 @@ static int tomtom_codec_enable_slimrx(struct snd_soc_dapm_widget *w,
 					      &dai->grph);
 		break;
 	case SND_SOC_DAPM_POST_PMD:
-		ret = wcd9xxx_close_slim_sch_rx(core, &dai->wcd9xxx_ch_list,
-						dai->grph);
+		tomtom_codec_vote_max_bw(codec, true);
+		ret = wcd9xxx_disconnect_port(core,
+					      &dai->wcd9xxx_ch_list,
+					      dai->grph);
+		pr_debug("%s: Disconnect RX port, ret = %d\n",
+			 __func__, ret);
 		if (!dai->bus_down_in_recovery)
 			ret = tomtom_codec_enable_slim_chmask(dai, false);
 		else
 			pr_debug("%s: bus in recovery skip enable slim_chmask",
 				__func__);
-		if (ret < 0) {
-			ret = wcd9xxx_disconnect_port(core,
-						      &dai->wcd9xxx_ch_list,
-						      dai->grph);
-			pr_debug("%s: Disconnect RX port, ret = %d\n",
-				 __func__, ret);
-		}
+		ret = wcd9xxx_close_slim_sch_rx(core, &dai->wcd9xxx_ch_list,
+						dai->grph);
+		tomtom_codec_vote_max_bw(codec, false);
 		break;
 	}
 	return ret;
@@ -8233,7 +8276,7 @@ static void tomtom_compute_impedance(struct wcd9xxx_mbhc *mbhc, s16 *l, s16 *r,
 	struct tomtom_priv *tomtom;
 
 	if (!mbhc) {
-		pr_err("%s: Invalid parameters mbhc = %p\n",
+		pr_err("%s: Invalid parameters mbhc = %pK\n",
 			__func__,  mbhc);
 		return;
 	}
@@ -8280,7 +8323,7 @@ static void tomtom_zdet_error_approx(struct wcd9xxx_mbhc *mbhc, uint32_t *zl,
 	const int shift = TOMTOM_ZDET_ERROR_APPROX_SHIFT;
 
 	if (!zl || !zr || !mbhc) {
-		pr_err("%s: Invalid parameters zl = %p zr = %p, mbhc = %p\n",
+		pr_err("%s: Invalid parameters zl = %pK zr = %pK, mbhc = %pK\n",
 			__func__, zl, zr, mbhc);
 		return;
 	}
@@ -8609,7 +8652,7 @@ static int tomtom_codec_fll_enable(struct snd_soc_codec *codec,
 	struct wcd9xxx *wcd9xxx;
 
 	if (!codec || !codec->control_data) {
-		pr_err("%s: Invalid codec handle, %p\n",
+		pr_err("%s: Invalid codec handle, %pK\n",
 		       __func__, codec);
 		return -EINVAL;
 	}
@@ -8644,6 +8687,7 @@ static int tomtom_codec_fll_enable(struct snd_soc_codec *codec,
 	return 0;
 }
 
+#if 0
 static int tomtom_codec_slim_reserve_bw(struct snd_soc_codec *codec,
 		u32 bw_ops, bool commit)
 {
@@ -8678,6 +8722,7 @@ static int tomtom_codec_vote_max_bw(struct snd_soc_codec *codec,
 	return tomtom_codec_slim_reserve_bw(codec,
 			bw_ops, true);
 }
+#endif
 
 static const struct wcd9xxx_resmgr_cb resmgr_cb = {
 	.cdc_rco_ctrl = tomtom_codec_internal_rco_ctrl,

@@ -13,13 +13,21 @@
 #ifndef DIAGFWD_CNTL_H
 #define DIAGFWD_CNTL_H
 
+/* Message registration commands */
 #define DIAG_CTRL_MSG_REG		1
+/* Message passing for DTR events */
 #define DIAG_CTRL_MSG_DTR		2
+/* Control Diag sleep vote, buffering etc */
 #define DIAG_CTRL_MSG_DIAGMODE		3
+/* Diag data based on "light" diag mask */
 #define DIAG_CTRL_MSG_DIAGDATA		4
+/* Send diag internal feature mask 'diag_int_feature_mask' */
 #define DIAG_CTRL_MSG_FEATURE		8
+/* Send Diag log mask for a particular equip id */
 #define DIAG_CTRL_MSG_EQUIP_LOG_MASK	9
+/* Send Diag event mask */
 #define DIAG_CTRL_MSG_EVENT_MASK_V2	10
+/* Send Diag F3 mask */
 #define DIAG_CTRL_MSG_F3_MASK_V2	11
 #define DIAG_CTRL_MSG_NUM_PRESETS	12
 #define DIAG_CTRL_MSG_SET_PRESET_ID	13
@@ -39,6 +47,17 @@
 #define DIAG_CTRL_MSG_PD_STATUS			30
 #define DIAG_CTRL_MSG_TIME_SYNC_PKT		31
 
+/*
+ * Feature Mask Definitions: Feature mask is used to sepcify Diag features
+ * supported by the Apps processor
+ *
+ * F_DIAG_FEATURE_MASK_SUPPORT - Denotes we support sending and receiving
+ *                               feature masks
+ * F_DIAG_LOG_ON_DEMAND_APPS - Apps responds to Log on Demand request
+ * F_DIAG_REQ_RSP_SUPPORT - Apps supported dedicated request response Channel
+ * F_DIAG_APPS_HDLC_ENCODE - HDLC encoding is done on the forward channel
+ * F_DIAG_STM - Denotes Apps supports Diag over STM
+ */
 #define F_DIAG_FEATURE_MASK_SUPPORT		0
 #define F_DIAG_LOG_ON_DEMAND_APPS		2
 #define F_DIAG_REQ_RSP_SUPPORT			4
@@ -100,7 +119,7 @@ struct diag_ctrl_event_mask {
 	uint8_t status;
 	uint8_t event_config;
 	uint32_t event_mask_size;
-	
+	/* Copy event mask here */
 } __packed;
 
 struct diag_ctrl_log_mask {
@@ -109,9 +128,9 @@ struct diag_ctrl_log_mask {
 	uint8_t stream_id;
 	uint8_t status;
 	uint8_t equip_id;
-	uint32_t num_items; 
-	uint32_t log_mask_size; 
-	
+	uint32_t num_items; /* Last log code for this equip_id */
+	uint32_t log_mask_size; /* Size of log mask stored in log_mask[] */
+	/* Copy log mask here */
 } __packed;
 
 struct diag_ctrl_msg_mask {
@@ -120,17 +139,17 @@ struct diag_ctrl_msg_mask {
 	uint8_t stream_id;
 	uint8_t status;
 	uint8_t msg_mode;
-	uint16_t ssid_first; 
-	uint16_t ssid_last; 
-	uint32_t msg_mask_size; 
-	
+	uint16_t ssid_first; /* Start of range of supported SSIDs */
+	uint16_t ssid_last; /* Last SSID in range */
+	uint32_t msg_mask_size; /* ssid_last - ssid_first + 1 */
+	/* Copy msg mask here */
 } __packed;
 
 struct diag_ctrl_feature_mask {
 	uint32_t ctrl_pkt_id;
 	uint32_t ctrl_pkt_data_len;
 	uint32_t feature_mask_len;
-	
+	/* Copy feature mask here */
 } __packed;
 
 struct diag_ctrl_msg_diagmode {

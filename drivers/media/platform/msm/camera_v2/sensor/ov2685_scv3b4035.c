@@ -361,18 +361,22 @@ static struct msm_camera_i2c_reg_conf
 	{0x581B, 0x0C},
 	{0x3A03, 0x4C},
 	{0x3A04, 0x40},
-	{0x3080, 0x00},
-	{0x3018, 0x44},
-	{0x3084, 0x0F},
-	{0x3085, 0x07},
-	{0x4837, 0x0F},
+	{0x3080, 0x02}, //change for 24fps
+	{0x3082, 0x48}, //change for 24fps
+	{0x3018, 0x44}, //change for 24fps
+	{0x3084, 0x0F}, //change for 24fps
+	{0x3085, 0x06}, //change for 24fps
+	{0x380d, 0xc8}, //change for 24fps
+	{0x380f, 0x10}, //change for 24fps
+	{0x4837, 0x12}, //change for 24fps
+
 	/* FSIN setup */
 	{0x3002, 0x00},
 	{0x3823, 0x30},
 	{0x3824, 0x00},
-	{0x3825, 0x20},
+	{0x3825, 0x10},
 	{0x3826, 0x00},
-	{0x3827, 0x04},
+	{0x3827, 0x08},
 };
 
 static struct msm_camera_i2c_reg_conf ov2685_scv3b4035_720p60_settings[] = {
@@ -1364,6 +1368,7 @@ static struct msm_sensor_ctrl_t ov2685_scv3b4035_s_ctrl = {
 	.sensor_v4l2_subdev_info_size =
 		 ARRAY_SIZE(ov2685_scv3b4035_subdev_info),
 	.func_tbl = &ov2685_scv3b4035_sensor_func_tbl,
+	.is_yuv = 1,
 };
 
 module_init(ov2685_scv3b4035_init_module);

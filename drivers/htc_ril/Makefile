@@ -11,3 +11,4 @@ ccflags-$(CONFIG_HTC_RADIO_SMEM) += -DSKU_NAME="\"$(KBUILD_SKU_NAME)\""
 obj-$(CONFIG_HTC_RADIO_SMEM)    += htc_radio_smem.o
 obj-$(CONFIG_HTC_MODEM_NOTIFIER)    += htc_modem_notifier.o
 obj-$(CONFIG_HTC_GARBAGE_FILTER) += htc_port_list.o
+obj-$(CONFIG_HTC_DEBUG_RIL_PCN0012_HTC_NET_MONITOR) += htc_net_monitor.o

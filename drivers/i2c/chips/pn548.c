@@ -25,13 +25,12 @@
 #include "pn548_mfg.h"
 #include "pn548_htc.h"
 int mfc_nfc_cmd_result = 0;
+int i2c_error_retry = 0;
 
 static   unsigned long watchdog_counter;
 static   unsigned int watchdogEn;
 static   unsigned int watchdog_timeout;
 #define WATCHDOG_FTM_TIMEOUT_SEC 20
-
-#define HIAE_NFC_POWER_CONTROL
 
 #ifdef HIAE_NFC_POWER_CONTROL
 struct regulator *nfc_twl80125_ldo5;
@@ -39,12 +38,15 @@ static   unsigned int NFC_I2C_SCL;
 static   unsigned int NFC_I2C_SDA;
 #endif
 
+#ifdef PMEC2_NFC_POWER_CONTROL
+struct regulator *nfc_vreg_l10;
+static   unsigned int NFC_I2C_SCL;
+static   unsigned int NFC_I2C_SDA;
+#endif
+
+
 #define SW_ENABLE_OFFMODECHARGING
 #ifdef SW_ENABLE_OFFMODECHARGING
-uint8_t CORE_RESET[] = {0x20, 0x00, 0x01, 0x00};
-uint8_t CORE_INIT[] = {0x20,0x01,0x00};
-uint8_t NFCEE_MODE_SET[] = {0x22,0x01,0x02,0x02,0x01};
-uint8_t RF_DISCOVER[] = {0x21,0x03,0x07,0x03,0x80,0x01,0x81,0x01,0x82,0x01};
 struct workqueue_struct *nfc_wq;
 struct delayed_work nfc_work;
 #endif
@@ -69,7 +71,8 @@ int is_uicc_swp = 1;
 
 #define MAX_BUFFER_SIZE	512
 
-#define I2C_RETRY_COUNT 10
+#define NFC_I2C_RETRY 5
+#define NFC_I2C_RETRY_ERROR_COUNT 5
 
 struct pn544_dev	{
 	struct class		*pn544_class;
@@ -103,6 +106,9 @@ static int pn544_RxData(uint8_t *rxData, int length)
 {
 	uint8_t loop_i;
 	struct pn544_dev *pni = pn_info;
+#ifdef PMEC2_NFC_POWER_CONTROL
+	int ret;
+#endif
 
 	struct i2c_msg msg[] = {
 		{
@@ -119,26 +125,56 @@ static int pn544_RxData(uint8_t *rxData, int length)
 
 	rxData[0] = 0;
 
-	for (loop_i = 0; loop_i < I2C_RETRY_COUNT; loop_i++) {
+	for (loop_i = 0; loop_i < NFC_I2C_RETRY; loop_i++) {
 		D("%s: retry %d ........\n", __func__, loop_i);
 		if (i2c_transfer(pni->client->adapter, msg, 1) > 0)
 			break;
+#ifdef HIAE_NFC_POWER_CONTROL
+	if (loop_i >= 3) {
+		E("%s : twl80125_ldo5 regulator_is_enabled = %d\n", __func__, regulator_is_enabled(nfc_twl80125_ldo5));
+		E("%s : twl80125_ldo5 regulator_get_voltage = %d\n", __func__, regulator_get_voltage(nfc_twl80125_ldo5));
+		E("%s : irq_gpio = %d, ven_gpio = %d, firm_gpio = %d\n", __func__, \
+                gpio_get_value(pni->irq_gpio), gpio_get_value(pni->ven_gpio), gpio_get_value(pni->firm_gpio));
+	}
+#endif
+
+#ifdef PMEC2_NFC_POWER_CONTROL
+	if (loop_i >= 3) {
+		E("%s : nfc_vreg_l10 regulator_get_voltage = %d\n", __func__, regulator_get_voltage(nfc_vreg_l10));
+		E("%s : irq_gpio = %d, ven_gpio = %d, firm_gpio = %d\n", __func__, \
+			gpio_get_value(pni->irq_gpio), gpio_get_value(pni->ven_gpio), gpio_get_value(pni->firm_gpio));
+		ret = regulator_is_enabled(nfc_vreg_l10);
+		E("%s : nfc_vreg_l10 regulator_is_enabled = %d\n", __func__,ret);
+		if(ret == 0) {
+			E("%s : Enabling nfc_vreg_l10...\n", __func__);
+			ret = regulator_enable(nfc_vreg_l10);
+			if (ret < 0) {
+				E("%s : nfc_vreg_l10 regulator_enable fail\n", __func__);
+			}else {
+				E("%s : nfc_vreg_l10 regulator_enable done\n", __func__);
+			}
+			E("%s : nfc_vreg_l10 check regulator_is_enabled = %d\n", __func__,regulator_is_enabled(nfc_vreg_l10));
+		}
+	}
+#endif
 
 		mdelay(10);
 	}
 
-	if (loop_i >= I2C_RETRY_COUNT) {
-		E("%s Error: retry over %d\n", __func__,
-			I2C_RETRY_COUNT);
-#ifdef HIAE_NFC_POWER_CONTROL
-		E("%s : twl80125_ldo5 regulator_is_enabled = %d\n", __func__, regulator_is_enabled(nfc_twl80125_ldo5));
-		E("%s : twl80125_ldo5 regulator_get_voltage = %d\n", __func__, regulator_get_voltage(nfc_twl80125_ldo5));
-                E("%s : irq_gpio = %d, ven_gpio = %d, firm_gpio = %d\n", __func__, \
-                gpio_get_value(pni->irq_gpio), gpio_get_value(pni->ven_gpio), gpio_get_value(pni->firm_gpio));
-#endif
+	if (loop_i >= NFC_I2C_RETRY) {
+		E("%s Error in i2c read: retry over %d error_count = %d\n", __func__,
+			NFC_I2C_RETRY,i2c_error_retry);
+		if (i2c_error_retry > NFC_I2C_RETRY_ERROR_COUNT) {
+			E("%s Error: retry over %d\n", __func__,
+			NFC_I2C_RETRY_ERROR_COUNT);
+			i2c_error_retry = 0;
+			return -EIO;
+		}
+		i2c_error_retry++;
 		return -EIO;
 	}
-
+	mdelay(1);
+	i2c_error_retry = 0;
 	return 0;
 }
 
@@ -154,31 +190,63 @@ static int pn544_TxData(uint8_t *txData, int length)
 		 .buf = txData,
 		 },
 	};
+#ifdef PMEC2_NFC_POWER_CONTROL
+	int ret;
+#endif
 
 	D("%s: [addr=%x flag=%x len=%x]\n", __func__,
 		msg[0].addr, msg[0].flags, msg[0].len);
 
 
-	for (loop_i = 0; loop_i < I2C_RETRY_COUNT; loop_i++) {
+	for (loop_i = 0; loop_i < NFC_I2C_RETRY; loop_i++) {
 		D("%s: retry %d ........\n", __func__, loop_i);
 		if (i2c_transfer(pni->client->adapter, msg, 1) > 0)
 			break;
+#ifdef HIAE_NFC_POWER_CONTROL
+	if (loop_i >= 3) {
+		E("%s : twl80125_ldo5 regulator_is_enabled = %d\n", __func__, regulator_is_enabled(nfc_twl80125_ldo5));
+		E("%s : twl80125_ldo5 regulator_get_voltage = %d\n", __func__, regulator_get_voltage(nfc_twl80125_ldo5));
+		E("%s : irq_gpio = %d, ven_gpio = %d, firm_gpio = %d\n", __func__, \
+                gpio_get_value(pni->irq_gpio), gpio_get_value(pni->ven_gpio), gpio_get_value(pni->firm_gpio));
+	}
+#endif
 
+#ifdef PMEC2_NFC_POWER_CONTROL
+	if (loop_i >= 3) {
+		E("%s : nfc_vreg_l10 regulator_get_voltage = %d\n", __func__, regulator_get_voltage(nfc_vreg_l10));
+		E("%s : irq_gpio = %d, ven_gpio = %d, firm_gpio = %d\n", __func__, \
+			gpio_get_value(pni->irq_gpio), gpio_get_value(pni->ven_gpio), gpio_get_value(pni->firm_gpio));
+		ret = regulator_is_enabled(nfc_vreg_l10);
+		E("%s : nfc_vreg_l10 regulator_is_enabled = %d\n", __func__, ret);
+		if(ret == 0) {
+			E("%s : Enabling nfc_vreg_l10...\n", __func__);
+			ret = regulator_enable(nfc_vreg_l10);
+			if (ret < 0) {
+				E("%s : nfc_vreg_l10 regulator_enable fail\n", __func__);
+			}else {
+				E("%s : nfc_vreg_l10 regulator_enable done\n", __func__);
+			}
+			E("%s : nfc_vreg_l10 check regulator_is_enabled = %d\n", __func__,regulator_is_enabled(nfc_vreg_l10));
+		}
+	}
+#endif
 		msleep(10);
 	}
 
-	if (loop_i >= I2C_RETRY_COUNT) {
-		E("%s:  Error: retry over %d\n",
-			__func__, I2C_RETRY_COUNT);
-#ifdef HIAE_NFC_POWER_CONTROL
-                E("%s : twl80125_ldo5 regulator_is_enabled = %d\n", __func__, regulator_is_enabled(nfc_twl80125_ldo5));
-                E("%s : twl80125_ldo5 regulator_get_voltage = %d\n", __func__, regulator_get_voltage(nfc_twl80125_ldo5));
-                E("%s : irq_gpio = %d, ven_gpio = %d, firm_gpio = %d\n", __func__, \
-                gpio_get_value(pni->irq_gpio), gpio_get_value(pni->ven_gpio), gpio_get_value(pni->firm_gpio));
-#endif
+	if (loop_i >= NFC_I2C_RETRY) {
+		E("%s Error in i2c write: retry over %d error_count = %d\n", __func__,
+			NFC_I2C_RETRY,i2c_error_retry);
+		if (i2c_error_retry > NFC_I2C_RETRY_ERROR_COUNT) {
+			E("%s Error: retry over %d\n", __func__,
+			NFC_I2C_RETRY_ERROR_COUNT);
+			i2c_error_retry = 0;
+			return -EIO;
+		}
+		i2c_error_retry++;
 		return -EIO;
 	}
-
+	mdelay(1);
+	i2c_error_retry = 0;
 	return 0;
 }
 
@@ -397,27 +465,28 @@ static long pn544_dev_ioctl(struct file *filp,
 		} else if (arg == 2) {
 			I("%s power on with firmware\n", __func__);
 			pn544_Enable();
+			msleep(20);
 			gpio_set_value(pni->firm_gpio, 1);
-			msleep(50);
+			msleep(20);
 			pn544_Disable();
-			msleep(50);
+			msleep(100);
 			pn544_Enable();
-			msleep(50);
+			msleep(20);
 		} else if (arg == 1) {
 			
-			I("%s power on (delay50)\n", __func__);
+			I("%s power on delay 100ms\n", __func__);
 			gpio_set_value(pni->firm_gpio, 0);
 			pn544_Enable();
-			msleep(50);
+			msleep(100);
 			is_debug = 1;
 			s_wdcmd_cnt = 0;
 			I("%s pn544_Enable, set is_debug = %d, s_wdcmd_cnt : %d\n", __func__, is_debug, s_wdcmd_cnt);
 		} else  if (arg == 0) {
 			
-			I("%s power off (delay50)\n", __func__);
+			I("%s power off delay 100ms\n", __func__);
 			gpio_set_value(pni->firm_gpio, 0);
 			pn544_Disable();
-			msleep(50);
+			msleep(100);
 			is_debug = is_debug_en;
 			I("%s pn544_Disable, set is_debug = %d, s_wdcmd_cnt = %d\n", __func__, is_debug, s_wdcmd_cnt);
 		} else {
@@ -1106,23 +1175,19 @@ static int mfg_nfc_test(int code)
 	case 88:
 #ifdef SW_ENABLE_OFFMODECHARGING
 			pn544_hw_reset_control(1);
+		I("%s: off_mode_charging script :\n", __func__);
+		if (script_processor(nfc_off_mode_charging_enble_script, sizeof(nfc_off_mode_charging_enble_script)) == 0) {
+			I("%s: store value = %d\n", __func__, code);
+			mfc_nfc_cmd_result = 1;
 			INIT_DELAYED_WORK(&nfc_work, pn544_process_irq);
 			nfc_wq = create_singlethread_workqueue("htc_nfc");
 			queue_delayed_work(nfc_wq, &nfc_work, 0);
 			mdelay(1);
-			if(pn544_TxData(CORE_RESET,4) < 0)
-				E("%s: CORE_RESET_CMD fail",__func__);
-			mdelay(NFC_READ_DELAY);
-			if(pn544_TxData(CORE_INIT,3) < 0)
-				E("%s: CORE_INIT_CMD fail",__func__);
-			mdelay(NFC_READ_DELAY);
-			if(pn544_TxData(NFCEE_MODE_SET,5) < 0)
-				E("%s: NFCEE_MODE_SET_CMD fail",__func__);
-			mdelay(NFC_READ_DELAY);
-			if(pn544_TxData(RF_DISCOVER,10)<0)
-				E("%s: RF_DISCOVERY_CMD fail",__func__);
-			mdelay(NFC_READ_DELAY);
-			I("%s:off_mode_charging complete!!",__func__);
+			I("%s: off_mode_charging complete!!\n",__func__);
+		} else {
+			E("%s: off_mode_charging fail!!\n",__func__);
+			pn544_hw_reset_control(0);
+		}
 #endif
 			break;
 	case 99:
@@ -1140,6 +1205,14 @@ static int mfg_nfc_test(int code)
         I("%s : twl80125_ldo5 regulator_is_enabled = %d\n", __func__, regulator_is_enabled(nfc_twl80125_ldo5));
         if (mfc_nfc_cmd_result < 0) {
                 E("%s : twl80125_ldo5 regulator_disable fail\n", __func__);
+        }
+#endif
+#ifdef PMEC2_NFC_POWER_CONTROL
+        mfc_nfc_cmd_result = regulator_disable(nfc_vreg_l10);
+        I("%s : vreg_l10 regulator_disable\n", __func__);
+        I("%s : vreg_l10 regulator_is_enabled = %d\n", __func__, regulator_is_enabled(nfc_vreg_l10));
+        if (mfc_nfc_cmd_result < 0) {
+                E("%s : vreg_l10 regulator_disable fail\n", __func__);
         }
 #endif
 
@@ -1274,6 +1347,7 @@ static int pn544_parse_dt(struct device *dev, struct pn544_i2c_platform_data *pd
 	prop = of_find_property(dt, "nxp,isalive", NULL);
 	if (prop) {
 		of_property_read_u32(dt, "nxp,isalive", &is_alive);
+		is_alive = pn548_htc_check_rfskuid(is_alive);
 		printk(KERN_INFO "[NFC] %s:is_alive = %d", __func__, is_alive);
 	} else {
 		goto parse_error;
@@ -1295,7 +1369,7 @@ static int pn544_parse_dt(struct device *dev, struct pn544_i2c_platform_data *pd
 	if(pdata->firm_gpio < 0) {
 		goto parse_error;
 	}
-#ifdef HIAE_NFC_POWER_CONTROL
+#if defined(HIAE_NFC_POWER_CONTROL) || defined(PMEC2_NFC_POWER_CONTROL)
         NFC_I2C_SCL = of_get_named_gpio_flags(dt, "nfc_i2c_scl", 0, NULL);
         if(NFC_I2C_SCL < 0) {
                 goto parse_error;
@@ -1315,7 +1389,7 @@ parse_error:
 
 void pn548_power_off_sequence(void)
 {
-#ifdef HIAE_NFC_POWER_CONTROL
+#if defined(HIAE_NFC_POWER_CONTROL) || defined(PMEC2_NFC_POWER_CONTROL)
 	int ret;
 	if(is_alive) {
 	printk(KERN_INFO "[NFC] %s ++\n", __func__);
@@ -1401,6 +1475,29 @@ static int pn544_probe(struct i2c_client *client,
                 return -ENODEV;
         }
 #endif
+
+#ifdef PMEC2_NFC_POWER_CONTROL
+        nfc_vreg_l10 = regulator_get(&client->dev, "pm8950_l10");
+        I("%s : vreg_l10 regulator_get\n", __func__);
+        if (nfc_vreg_l10< 0) {
+                E("%s : vreg_l10 regulator_get fail\n", __func__);
+                return -ENODEV;
+        }
+        ret = regulator_set_voltage(nfc_vreg_l10, 1800000, 1800000);
+        I("%s : vreg_l10 regulator_set_voltage\n", __func__);
+        if (ret < 0) {
+                E("%s : vreg_l10 regulator_set_voltage fail\n", __func__);
+                return -ENODEV;
+        }
+        ret = regulator_enable(nfc_vreg_l10);
+        I("%s : vreg_l10 regulator_enable\n", __func__);
+        I("%s : vreg_l10 regulator_is_enabled = %d\n", __func__, regulator_is_enabled(nfc_vreg_l10));
+        if (ret < 0) {
+                E("%s : vreg_l10 regulator_enable fail\n", __func__);
+                return -ENODEV;
+        }
+#endif
+
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		E("%s : need I2C_FUNC_I2C\n", __func__);
 		return  -ENODEV;
@@ -1628,6 +1725,9 @@ err_exit:
 	return ret;
 }
 
+static void pn544_shutdown(struct i2c_client *client) {
+	pn548_power_off_sequence();
+}
 static int pn544_remove(struct i2c_client *client)
 {
 	struct pn544_dev *pn544_dev;
@@ -1694,6 +1794,7 @@ static struct i2c_driver pn544_driver = {
 	.id_table	= pn544_id,
 	.probe		= pn544_probe,
 	.remove		= pn544_remove,
+	.shutdown = pn544_shutdown,
 	.driver		= {
 		.owner	= THIS_MODULE,
 		.name	= "pn544",

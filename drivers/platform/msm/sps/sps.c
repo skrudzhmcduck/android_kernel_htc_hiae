@@ -2189,6 +2189,9 @@ int sps_register_bam_device(const struct sps_bam_props *bam_props,
 		goto exit_err;
 	}
 
+	if (bam_props->ipc_loglevel)
+		bam->ipc_loglevel = bam_props->ipc_loglevel;
+
 	ok = sps_bam_device_init(bam);
 	mutex_unlock(&bam->lock);
 	if (ok) {
@@ -2989,8 +2992,8 @@ static int __init sps_init(void)
 							"sps_ipc_log3", 0);
 	if (!sps->ipc_log3)
 		pr_err("Failed to create IPC log3\n");
-	sps->ipc_log4 = ipc_log_context_create(SPS_IPC_LOGPAGES,
-							"sps_ipc_log4", 0);
+	sps->ipc_log4 = ipc_log_context_create(SPS_IPC_LOGPAGES *
+				SPS_IPC_REG_DUMP_FACTOR, "sps_ipc_log4", 0);
 	if (!sps->ipc_log4)
 		pr_err("Failed to create IPC log4\n");
 

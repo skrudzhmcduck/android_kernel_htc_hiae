@@ -38,6 +38,13 @@ config HTC_DEBUG_DSP
         help
           This option enables the trigger ramdump when lpass command timeout.
 
+config HTC_DEBUG_MSM8976
+    bool "Enable Support for Qualcomm MSM8976"
+    depends on HTC_DEBUG
+    help
+      This enables support for the MSM8976 chipset. If you dont
+      know what do here, say N
+
 comment "HTC features"
 menuconfig HTC_FEATURES
 	bool "HTC Implement Features"
@@ -81,3 +88,9 @@ config LMK_ZYGOTE_PROTECT
 config HTC_FD_MONITOR
         bool "fd operation monitor mechanism"
         default n
+
+config HTC_FEATURES_SMLOG_IN_RMTFS
+        bool "HTC style modem smlog in rmtfs"
+        default n
+        help
+          Say Y here if you want the HTC style for modem smlog in rmtfs

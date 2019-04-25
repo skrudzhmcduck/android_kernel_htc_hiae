@@ -26,27 +26,32 @@
 #include "peripheral-loader.h"
 #include "pil-q6v5.h"
 
+/* QDSP6SS Register Offsets */
 #define QDSP6SS_RESET			0x014
 #define QDSP6SS_GFMUX_CTL		0x020
 #define QDSP6SS_PWR_CTL			0x030
 #define QDSP6SS_MEM_CTL                 0x0B0
 #define QDSP6SS_STRAP_ACC		0x110
 
+/* AXI Halt Register Offsets */
 #define AXI_HALTREQ			0x0
 #define AXI_HALTACK			0x4
 #define AXI_IDLE			0x8
 
 #define HALT_ACK_TIMEOUT_US		100000
 
+/* QDSP6SS_RESET */
 #define Q6SS_STOP_CORE			BIT(0)
 #define Q6SS_CORE_ARES			BIT(1)
 #define Q6SS_BUS_ARES_ENA		BIT(2)
 
+/* QDSP6SS_GFMUX_CTL */
 #define Q6SS_CLK_ENA			BIT(1)
 #define Q6SS_CLK_SRC_SEL_C		BIT(3)
 #define Q6SS_CLK_SRC_SEL_FIELD		0xC
 #define Q6SS_CLK_SRC_SWITCH_CLK_OVR	BIT(8)
 
+/* QDSP6SS_PWR_CTL */
 #define Q6SS_L2DATA_SLP_NRET_N_0	BIT(0)
 #define Q6SS_L2DATA_SLP_NRET_N_1	BIT(1)
 #define Q6SS_L2DATA_SLP_NRET_N_2	BIT(2)
@@ -58,6 +63,7 @@
 #define QDSS_BHS_ON			BIT(21)
 #define QDSS_LDO_BYP			BIT(22)
 
+/* QDSP6v55 parameters */
 #define QDSP6v55_LDO_ON                 BIT(26)
 #define QDSP6v55_LDO_BYP                BIT(25)
 #define QDSP6v55_BHS_ON                 BIT(24)
@@ -167,10 +173,10 @@ void pil_q6v5_halt_axi_port(struct pil_desc *pil, void __iomem *halt_base)
 	int ret;
 	u32 status;
 
-	
+	/* Assert halt request */
 	writel_relaxed(1, halt_base + AXI_HALTREQ);
 
-	
+	/* Wait for halt */
 	ret = readl_poll_timeout(halt_base + AXI_HALTACK,
 		status, status != 0, 50, HALT_ACK_TIMEOUT_US);
 	if (ret)
@@ -178,39 +184,57 @@ void pil_q6v5_halt_axi_port(struct pil_desc *pil, void __iomem *halt_base)
 	else if (!readl_relaxed(halt_base + AXI_IDLE))
 		dev_warn(pil->dev, "Port %p halt failed\n", halt_base);
 
-	
+	/* Clear halt request (port will remain halted until reset) */
 	writel_relaxed(0, halt_base + AXI_HALTREQ);
 }
 EXPORT_SYMBOL(pil_q6v5_halt_axi_port);
+
+void assert_clamps(struct pil_desc *pil)
+{
+	u32 val;
+	struct q6v5_data *drv = container_of(pil, struct q6v5_data, desc);
+
+	/*
+	 * Assert QDSP6 I/O clamp, memory wordline clamp, and compiler memory
+	 * clamp as a software workaround to avoid high MX current during
+	 * LPASS/MSS restart.
+	 */
+	val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
+	val |= (Q6SS_CLAMP_IO | QDSP6v55_CLAMP_WL |
+			QDSP6v55_CLAMP_QMC_MEM);
+	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
+	/* To make sure asserting clamps is done before MSS restart*/
+	mb();
+}
 
 static void __pil_q6v5_shutdown(struct pil_desc *pil)
 {
 	u32 val;
 	struct q6v5_data *drv = container_of(pil, struct q6v5_data, desc);
 
-	
+	/* Turn off core clock */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_GFMUX_CTL);
 	val &= ~Q6SS_CLK_ENA;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_GFMUX_CTL);
 
-	
+	/* Clamp IO */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 	val |= Q6SS_CLAMP_IO;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
-	
+	/* Turn off Q6 memories */
 	val &= ~(Q6SS_L2DATA_SLP_NRET_N_0 | Q6SS_L2DATA_SLP_NRET_N_1 |
 		 Q6SS_L2DATA_SLP_NRET_N_2 | Q6SS_SLP_RET_N |
 		 Q6SS_L2TAG_SLP_NRET_N | Q6SS_ETB_SLP_NRET_N |
 		 Q6SS_L2DATA_STBY_N);
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
-	
+	/* Assert Q6 resets */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_RESET);
 	val |= (Q6SS_CORE_ARES | Q6SS_BUS_ARES_ENA);
 	writel_relaxed(val, drv->reg_base + QDSP6SS_RESET);
 
-	
+	/* Kill power at block headswitch */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 	val &= ~QDSS_BHS_ON;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
@@ -220,7 +244,7 @@ void pil_q6v5_shutdown(struct pil_desc *pil)
 {
 	struct q6v5_data *drv = container_of(pil, struct q6v5_data, desc);
 	if (drv->qdsp6v55)
-		
+		/* Subsystem driver expected to halt bus and assert reset */
 		return;
 	else
 		__pil_q6v5_shutdown(pil);
@@ -232,18 +256,22 @@ static int __pil_q6v5_reset(struct pil_desc *pil)
 	struct q6v5_data *drv = container_of(pil, struct q6v5_data, desc);
 	u32 val;
 
-	
+	/* Assert resets, stop core */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_RESET);
 	val |= (Q6SS_CORE_ARES | Q6SS_BUS_ARES_ENA | Q6SS_STOP_CORE);
 	writel_relaxed(val, drv->reg_base + QDSP6SS_RESET);
 
-	
+	/* Enable power block headswitch, and wait for it to stabilize */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 	val |= QDSS_BHS_ON | QDSS_LDO_BYP;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 	mb();
 	udelay(1);
 
+	/*
+	 * Turn on memories. L2 banks should be done individually
+	 * to minimize inrush current.
+	 */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 	val |= Q6SS_SLP_RET_N | Q6SS_L2TAG_SLP_NRET_N |
 	       Q6SS_ETB_SLP_NRET_N | Q6SS_L2DATA_STBY_N;
@@ -255,32 +283,32 @@ static int __pil_q6v5_reset(struct pil_desc *pil)
 	val |= Q6SS_L2DATA_SLP_NRET_N_0;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
-	
+	/* Remove IO clamp */
 	val &= ~Q6SS_CLAMP_IO;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
-	
+	/* Bring core out of reset */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_RESET);
 	val &= ~Q6SS_CORE_ARES;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_RESET);
 
-	
+	/* Turn on core clock */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_GFMUX_CTL);
 	val |= Q6SS_CLK_ENA;
 
-	
+	/* Need a different clock source for v5.2.0 */
 	if (drv->qdsp6v5_2_0) {
 		val &= ~Q6SS_CLK_SRC_SEL_FIELD;
 		val |= Q6SS_CLK_SRC_SEL_C;
 	}
 
-	
+	/* force clock on during source switch */
 	if (drv->qdsp6v56)
 		val |= Q6SS_CLK_SRC_SWITCH_CLK_OVR;
 
 	writel_relaxed(val, drv->reg_base + QDSP6SS_GFMUX_CTL);
 
-	
+	/* Start core execution */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_RESET);
 	val &= ~Q6SS_STOP_CORE;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_RESET);
@@ -314,22 +342,22 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 	u32 val;
 	int i;
 
-	
+	/* Override the ACC value if required */
 	if (drv->override_acc)
 		writel_relaxed(QDSP6SS_ACC_OVERRIDE_VAL,
 				drv->reg_base + QDSP6SS_STRAP_ACC);
 
-	
+	/* Assert resets, stop core */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_RESET);
 	val |= (Q6SS_CORE_ARES | Q6SS_BUS_ARES_ENA | Q6SS_STOP_CORE);
 	writel_relaxed(val, drv->reg_base + QDSP6SS_RESET);
 
-	
+	/* BHS require xo cbcr to be enabled */
 	i = q6v55_branch_clk_enable(drv);
 	if (i)
 		return i;
 
-	
+	/* Enable power block headswitch, and wait for it to stabilize */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 	val |= QDSP6v55_BHS_ON;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
@@ -338,28 +366,32 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 	val |= QDSP6v55_LDO_BYP;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
-	
+	/* Remove QMC_MEM clamp */
 	val &= ~QDSP6v55_CLAMP_QMC_MEM;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
 	if (drv->qdsp6v56_1_3) {
-		
+		/* Deassert memory peripheral sleep and L2 memory standby */
 		val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 		val |= (Q6SS_L2DATA_STBY_N | Q6SS_SLP_RET_N);
 		writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
-		
+		/* Turn on L1, L2 and ETB memories 1 at a time */
 		for (i = 17; i >= 0; i--) {
 			val |= BIT(i);
 			writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 			udelay(1);
 		}
 	} else if (drv->qdsp6v56_1_8) {
-		
+		/* Deassert memory peripheral sleep and L2 memory standby */
 		val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 		val |= (Q6SS_L2DATA_STBY_N | Q6SS_SLP_RET_N);
 		writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
+		/*
+		 * Enable memories, turn on memory footswitch/head switch
+		 * one bank at a time to avoid in-rush current
+		 */
 		val = readl_relaxed(drv->reg_base + QDSP6SS_MEM_CTL);
 		for (i = 19; i >= 0; i--) {
 			val |= BIT(i);
@@ -367,33 +399,33 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 			udelay(1);
 		}
 	} else {
-		
+		/* Turn on memories. */
 		val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 		val |= 0xFFF00;
 		writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
-		
+		/* Turn on L2 banks 1 at a time */
 		for (i = 0; i <= 7; i++) {
 			val |= BIT(i);
 			writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 		}
 	}
 
-	
+	/* Remove word line clamp */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 	val &= ~QDSP6v55_CLAMP_WL;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
-	
+	/* Remove IO clamp */
 	val &= ~Q6SS_CLAMP_IO;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
-	
+	/* Bring core out of reset */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_RESET);
 	val &= ~(Q6SS_CORE_ARES | Q6SS_STOP_CORE);
 	writel_relaxed(val, drv->reg_base + QDSP6SS_RESET);
 
-	
+	/* Turn on core clock */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_GFMUX_CTL);
 	val |= Q6SS_CLK_ENA;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_GFMUX_CTL);
@@ -512,6 +544,8 @@ struct q6v5_data *pil_q6v5_init(struct platform_device *pdev)
 
 	drv->ahb_clk_vote = of_property_read_bool(pdev->dev.of_node,
 						"qcom,ahb-clk-vote");
+	drv->mx_spike_wa = of_property_read_bool(pdev->dev.of_node,
+						"qcom,mx-spike-wa");
 
 	drv->xo = devm_clk_get(&pdev->dev, "xo");
 	if (IS_ERR(drv->xo))

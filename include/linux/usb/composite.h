@@ -191,6 +191,7 @@ struct usb_composite_dev {
 	struct usb_composite_driver	*driver;
 	struct switch_dev		sw_function_switch_on;
 	struct switch_dev		sw_function_switch_off;
+	struct switch_dev		usb_nonstandard_cable;
 
 	u8				next_string_id;
 	char				*def_manufacturer;

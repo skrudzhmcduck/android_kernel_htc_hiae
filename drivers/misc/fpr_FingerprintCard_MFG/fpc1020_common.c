@@ -31,6 +31,9 @@
 #endif
 
 
+/* -------------------------------------------------------------------- */
+/* fpc1020 data types							*/
+/* -------------------------------------------------------------------- */
 struct chip_struct {
 	fpc1020_chip_t type;
 	u16 hwid;
@@ -42,6 +45,9 @@ struct chip_struct {
 };
 
 
+/* -------------------------------------------------------------------- */
+/* fpc1020 driver constants						*/
+/* -------------------------------------------------------------------- */
 #define FPC1140_ROWS		192u
 #define FPC1140_COLUMNS		56u
 
@@ -59,18 +65,18 @@ struct chip_struct {
 
 
 static const char *chip_text[] = {
-	"N/A",		
-	"fpc1020a", 	
-	"fpc1021a", 	
-	"fpc1021b", 	
-	"fpc1150a", 	
-	"fpc1150b", 	
-	"fpc1150f", 	
-	"fpc1155x", 	
-	"fpc1140a", 	
-	"fpc1145x", 	
-	"fpc1140b", 	
-	"fpc1025x", 	
+	"N/A",		/* FPC1020_CHIP_NONE */
+	"fpc1020a", 	/* FPC1020_CHIP_1020A */
+	"fpc1021a", 	/* FPC1020_CHIP_1021A */
+	"fpc1021b", 	/* FPC1020_CHIP_1021B */
+	"fpc1150a", 	/* FPC1020_CHIP_1150A */
+	"fpc1150b", 	/* FPC1020_CHIP_1150B */
+	"fpc1150f", 	/* FPC1020_CHIP_1150F */
+	"fpc1155x", 	/* FPC1020_CHIP_1155X */
+	"fpc1140a", 	/* FPC1020_CHIP_1140A */
+	"fpc1145x", 	/* FPC1020_CHIP_1145X */
+	"fpc1140b", 	/* FPC1020_CHIP_1140B */
+	"fpc1025x", 	/* FPC1020_CHIP_1025X */
 };
 
 static const struct chip_struct chip_data[] = {
@@ -240,6 +246,9 @@ const fpc1020_diag_t fpc1020_diag_default = {
 };
 
 
+/* -------------------------------------------------------------------- */
+/* function prototypes							*/
+/* -------------------------------------------------------------------- */
 static int fpc1020_check_hw_id_extended(fpc1020_data_t *fpc1020);
 
 static int fpc1020_hwid_1020a(fpc1020_data_t *fpc1020);
@@ -266,6 +275,9 @@ static int fpc1020_check_irq_after_reset(fpc1020_data_t *fpc1020);
 
 static int fpc1020_flush_adc(fpc1020_data_t *fpc1020);
 
+/* -------------------------------------------------------------------- */
+/* function definitions							*/
+/* -------------------------------------------------------------------- */
 size_t fpc1020_calc_huge_buffer_minsize(fpc1020_data_t *fpc1020)
 {
 	const size_t buff_min = FPC1020_EXT_HWID_CHECK_ID1020A_ROWS *
@@ -281,6 +293,7 @@ size_t fpc1020_calc_huge_buffer_minsize(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_manage_huge_buffer(fpc1020_data_t *fpc1020, size_t new_size)
 {
 	int error = 0;
@@ -335,6 +348,7 @@ int fpc1020_manage_huge_buffer(fpc1020_data_t *fpc1020, size_t new_size)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_setup_defaults(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -413,6 +427,7 @@ out_err:
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_gpio_reset(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -446,6 +461,7 @@ int fpc1020_gpio_reset(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_spi_reset(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -485,6 +501,7 @@ int fpc1020_spi_reset(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_reset(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -534,6 +551,7 @@ extern char firmware_fpc[30];
 extern int pos;
 extern bool match_firmware;
 extern int fp_sensor;
+/* -------------------------------------------------------------------- */
 int fpc1020_check_hw_id(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -561,8 +579,8 @@ int fpc1020_check_hw_id(fpc1020_data_t *fpc1020)
 	else if (fpc1020->use_fpc2050) {
 		dev_info(&fpc1020->spi->dev,
 			"Modify hwid from 0x%x\n", hardware_id);
-		hardware_id |= 0x8000;  
-		hardware_id &= 0xFFF0;  
+		hardware_id |= 0x8000;  // Mark it as none bezel
+		hardware_id &= 0xFFF0;  // Ignore manufacture
 	}
 
 	while (!match && chip_data[counter].type != FPC1020_CHIP_NONE) {
@@ -591,7 +609,7 @@ int fpc1020_check_hw_id(fpc1020_data_t *fpc1020)
 			}
 		}
 
-	
+	//HTC fingerprint attribute
 	pos += snprintf(firmware_fpc+pos, sizeof(firmware_fpc), "%0x ", hardware_id);
 	match_firmware = match;
 
@@ -621,12 +639,14 @@ int fpc1020_check_hw_id(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 const char *fpc1020_hw_id_text(fpc1020_data_t *fpc1020)
 {
 	return chip_text[fpc1020->chip.type];
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_check_hw_id_extended(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -648,6 +668,7 @@ static int fpc1020_check_hw_id_extended(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_hwid_1020a(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -733,6 +754,7 @@ out_err:
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_id_1020a_setup(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -763,6 +785,7 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_write_sensor_setup(fpc1020_data_t *fpc1020)
 {
 	switch (fpc1020->chip.type)
@@ -800,6 +823,7 @@ int fpc1020_write_sensor_setup(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_sensor_1020a_setup(fpc1020_data_t *fpc1020)
 {
 	switch (fpc1020->chip.revision)
@@ -820,6 +844,7 @@ static int fpc1020_write_sensor_1020a_setup(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_sensor_1020a_a1a2_setup(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -872,8 +897,8 @@ static int fpc1020_write_sensor_1020a_a1a2_setup(fpc1020_data_t *fpc1020)
 	if (error)
 		goto out;
 
-	temp_u8 = (fpc1020->vddtx_mv > 0) ? 0x02 :	
-		(fpc1020->txout_boost) ? 0x22 : 0x12;	
+	temp_u8 = (fpc1020->vddtx_mv > 0) ? 0x02 :	/* external supply */
+		(fpc1020->txout_boost) ? 0x22 : 0x12;	/* internal supply */
 	FPC1020_MK_REG_WRITE(reg, FPC102X_REG_FINGER_DRIVE_CONF, &temp_u8);
 	error = fpc1020_reg_access(fpc1020, &reg);
 	if (error)
@@ -918,6 +943,7 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_sensor_1020a_a3a4_setup(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -970,8 +996,8 @@ static int fpc1020_write_sensor_1020a_a3a4_setup(fpc1020_data_t *fpc1020)
 		goto out;
 	}
 
-	temp_u8 = (fpc1020->vddtx_mv > 0) ? 0x02 :	
-		(fpc1020->txout_boost) ? 0x22 : 0x12;	
+	temp_u8 = (fpc1020->vddtx_mv > 0) ? 0x02 :	/* external supply */
+		(fpc1020->txout_boost) ? 0x22 : 0x12;	/* internal supply */
 	FPC1020_MK_REG_WRITE(reg, FPC102X_REG_FINGER_DRIVE_CONF, &temp_u8);
 	error = fpc1020_reg_access(fpc1020, &reg);
 	if (error)
@@ -1015,6 +1041,7 @@ out:
 	return error;
 }
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_sensor_1021_setup(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -1042,8 +1069,8 @@ static int fpc1020_write_sensor_1021_setup(fpc1020_data_t *fpc1020)
 	if (error)
 		goto out;
 
-	temp_u8 = (fpc1020->vddtx_mv > 0) ? 0x02 :	
-		(fpc1020->txout_boost) ? 0x22 : 0x12;	
+	temp_u8 = (fpc1020->vddtx_mv > 0) ? 0x02 :	/* external supply */
+		(fpc1020->txout_boost) ? 0x22 : 0x12;	/* internal supply */
 	FPC1020_MK_REG_WRITE(reg, FPC102X_REG_FINGER_DRIVE_CONF, &temp_u8);
 	error = fpc1020_reg_access(fpc1020, &reg);
 	if (error)
@@ -1087,6 +1114,7 @@ out:
 	return error;
 }
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_sensor_1025_setup(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -1164,6 +1192,7 @@ out:
 	return error;
 }
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_sensor_1150_setup(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -1192,8 +1221,8 @@ static int fpc1020_write_sensor_1150_setup(fpc1020_data_t *fpc1020)
 	if (error)
 		goto out;
 
-	temp_u8 = (fpc1020->vddtx_mv > 0) ? 0x02 :	
-		(fpc1020->txout_boost) ? 0x22 : 0x12;	
+	temp_u8 = (fpc1020->vddtx_mv > 0) ? 0x02 :	/* external supply */
+		(fpc1020->txout_boost) ? 0x22 : 0x12;	/* internal supply */
 	FPC1020_MK_REG_WRITE(reg, FPC102X_REG_FINGER_DRIVE_CONF, &temp_u8);
 	error = fpc1020_reg_access(fpc1020, &reg);
 	if (error)
@@ -1221,11 +1250,11 @@ static int fpc1020_write_sensor_1150_setup(fpc1020_data_t *fpc1020)
 	if (error)
 		goto out;
 
-	temp_u32 = 0x0001; 
+	temp_u32 = 0x0001; /* fngrUpSteps */
 	temp_u32 <<= 8;
-	temp_u32 |= fpc1020->setup.finger_detect_threshold; 
+	temp_u32 |= fpc1020->setup.finger_detect_threshold; /* fngrLstThr */
 	temp_u32 <<= 8;
-	temp_u32 |= fpc1020->setup.finger_detect_threshold; 
+	temp_u32 |= fpc1020->setup.finger_detect_threshold; /* fngrDetThr */
 	FPC1020_MK_REG_WRITE(reg, FPC1150_REG_FNGR_DET_THRES, &temp_u32);
 	error = fpc1020_reg_access(fpc1020, &reg);
 	if (error)
@@ -1242,6 +1271,7 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_sensor_1155_setup(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -1276,7 +1306,7 @@ static int fpc1020_write_sensor_1155_setup(fpc1020_data_t *fpc1020)
 	if (fpc1020->txout_boost)
 		dev_err(&fpc1020->spi->dev, "%s Ignoring TxOut boost setting\n", __func__);
 
-	temp_u8 = 0x12; 
+	temp_u8 = 0x12; /* internal supply, no boost */
 	FPC1020_MK_REG_WRITE(reg, FPC102X_REG_FINGER_DRIVE_CONF, &temp_u8);
 	error = fpc1020_reg_access(fpc1020, &reg);
 	if (error)
@@ -1304,11 +1334,11 @@ static int fpc1020_write_sensor_1155_setup(fpc1020_data_t *fpc1020)
 	if (error)
 		goto out;
 
-	temp_u32 = 0x0001; 
+	temp_u32 = 0x0001; /* fngrUpSteps */
 	temp_u32 <<= 8;
-	temp_u32 |= fpc1020->setup.finger_detect_threshold; 
+	temp_u32 |= fpc1020->setup.finger_detect_threshold; /* fngrLstThr */
 	temp_u32 <<= 8;
-	temp_u32 |= fpc1020->setup.finger_detect_threshold; 
+	temp_u32 |= fpc1020->setup.finger_detect_threshold; /* fngrDetThr */
 	FPC1020_MK_REG_WRITE(reg, FPC1150_REG_FNGR_DET_THRES, &temp_u32);
 	error = fpc1020_reg_access(fpc1020, &reg);
 	if (error)
@@ -1337,6 +1367,7 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_sensor_1140_setup(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -1365,8 +1396,8 @@ static int fpc1020_write_sensor_1140_setup(fpc1020_data_t *fpc1020)
 	if (error)
 		goto out;
 
-	temp_u8 = (fpc1020->vddtx_mv > 0) ? 0x02 :	
-		(fpc1020->txout_boost) ? 0x22 : 0x12;	
+	temp_u8 = (fpc1020->vddtx_mv > 0) ? 0x02 :	/* external supply */
+		(fpc1020->txout_boost) ? 0x22 : 0x12;	/* internal supply */
 	FPC1020_MK_REG_WRITE(reg, FPC102X_REG_FINGER_DRIVE_CONF, &temp_u8);
 	error = fpc1020_reg_access(fpc1020, &reg);
 	if (error)
@@ -1394,11 +1425,11 @@ static int fpc1020_write_sensor_1140_setup(fpc1020_data_t *fpc1020)
 	if (error)
 		goto out;
 
-	temp_u32 = 0x0001; 
+	temp_u32 = 0x0001; /* fngrUpSteps */
 	temp_u32 <<= 8;
-	temp_u32 |= fpc1020->setup.finger_detect_threshold; 
+	temp_u32 |= fpc1020->setup.finger_detect_threshold; /* fngrLstThr */
 	temp_u32 <<= 8;
-	temp_u32 |= fpc1020->setup.finger_detect_threshold; 
+	temp_u32 |= fpc1020->setup.finger_detect_threshold; /* fngrDetThr */
 	FPC1020_MK_REG_WRITE(reg, FPC1150_REG_FNGR_DET_THRES, &temp_u32);
 	error = fpc1020_reg_access(fpc1020, &reg);
 	if (error)
@@ -1415,6 +1446,7 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_write_sensor_1145_setup(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -1449,7 +1481,7 @@ static int fpc1020_write_sensor_1145_setup(fpc1020_data_t *fpc1020)
 	if (fpc1020->txout_boost)
 		dev_err(&fpc1020->spi->dev, "%s Ignoring TxOut boost setting\n", __func__);
 
-	temp_u8 = 0x12; 
+	temp_u8 = 0x12; /* internal supply, no boost */
 	FPC1020_MK_REG_WRITE(reg, FPC102X_REG_FINGER_DRIVE_CONF, &temp_u8);
 	error = fpc1020_reg_access(fpc1020, &reg);
 	if (error)
@@ -1477,11 +1509,11 @@ static int fpc1020_write_sensor_1145_setup(fpc1020_data_t *fpc1020)
 	if (error)
 		goto out;
 
-	temp_u32 = 0x0001; 
+	temp_u32 = 0x0001; /* fngrUpSteps */
 	temp_u32 <<= 8;
-	temp_u32 |= fpc1020->setup.finger_detect_threshold; 
+	temp_u32 |= fpc1020->setup.finger_detect_threshold; /* fngrLstThr */
 	temp_u32 <<= 8;
-	temp_u32 |= fpc1020->setup.finger_detect_threshold; 
+	temp_u32 |= fpc1020->setup.finger_detect_threshold; /* fngrDetThr */
 	FPC1020_MK_REG_WRITE(reg, FPC1150_REG_FNGR_DET_THRES, &temp_u32);
 	error = fpc1020_reg_access(fpc1020, &reg);
 	if (error)
@@ -1510,6 +1542,7 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_check_irq_after_reset(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -1541,6 +1574,7 @@ static int fpc1020_check_irq_after_reset(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_wait_for_irq(fpc1020_data_t *fpc1020, int timeout)
 {
 	int result = 0;
@@ -1571,6 +1605,7 @@ int fpc1020_wait_for_irq(fpc1020_data_t *fpc1020, int timeout)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_read_irq(fpc1020_data_t *fpc1020, bool clear_irq)
 {
 	int error = 0;
@@ -1609,11 +1644,12 @@ int fpc1020_read_irq(fpc1020_data_t *fpc1020, bool clear_irq)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_read_status_reg(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
 	u8 status;
-	 fpc1020_reg_access_t reg_read = {
+	/* const */ fpc1020_reg_access_t reg_read = {
 		.reg = FPC102X_REG_FPC_STATUS,
 		.write = false,
 		.reg_size = FPC1020_REG_SIZE(FPC102X_REG_FPC_STATUS),
@@ -1626,6 +1662,7 @@ int fpc1020_read_status_reg(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_reg_access(fpc1020_data_t *fpc1020,
 		      fpc1020_reg_access_t *reg_data)
 {
@@ -1721,7 +1758,7 @@ int fpc1020_reg_access(fpc1020_data_t *fpc1020,
 		gpio_set_value(fpc1020->cs_gpio, 1);
 #endif
 
-	
+	//dev_dbg(&fpc1020->spi->dev,
 	printk(
 		"%s %s 0x%x/%dd (%d bytes) %x %x %x %x : %x %x %x %x\n",
 		 __func__,
@@ -1743,6 +1780,7 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_cmd(fpc1020_data_t *fpc1020,
 			fpc1020_cmd_t cmd,
 			u8 wait_irq_mask)
@@ -1788,12 +1826,13 @@ int fpc1020_cmd(fpc1020_data_t *fpc1020,
 		gpio_set_value(fpc1020->cs_gpio, 1);
 #endif
 
-	
+	// dev_dbg(&fpc1020->spi->dev, "%s 0x%x/%dd\n", __func__, cmd, cmd);
 
 	return error;
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_wait_finger_present(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -1845,6 +1884,7 @@ int fpc1020_wait_finger_present(fpc1020_data_t *fpc1020)
 	}
 }
 
+/* -------------------------------------------------------------------- */
 int fpc1020_get_finger_present_status(fpc1020_data_t *fpc1020)
 {
 	int status;
@@ -1856,17 +1896,18 @@ int fpc1020_get_finger_present_status(fpc1020_data_t *fpc1020)
 
 			up(&fpc1020->worker.sem_idle);
 		} else {
-			
+			/* Return last recorded status */
 			status = (int)fpc1020->diag.finger_present_status;
 		}
 		up(&fpc1020->mutex);
 	} else {
-		
+		/* Return last recorded status */
 		status = (int)fpc1020->diag.finger_present_status;
 	}
 	return status;
 }
 
+/* -------------------------------------------------------------------- */
 int fpc1020_check_finger_present_raw(fpc1020_data_t *fpc1020)
 {
 	fpc1020_reg_access_t reg;
@@ -1891,12 +1932,13 @@ int fpc1020_check_finger_present_raw(fpc1020_data_t *fpc1020)
 
 	fpc1020->diag.finger_present_status = temp_u16;
 
-	
+	//dev_dbg(&fpc1020->spi->dev, "%s zonedata = 0x%x\n", __func__, temp_u16);
 
 	return temp_u16;
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_check_finger_present_sum(fpc1020_data_t *fpc1020)
 {
 	int zones = 0;
@@ -1914,12 +1956,13 @@ int fpc1020_check_finger_present_sum(fpc1020_data_t *fpc1020)
 			zones >>= 1;
 			mask >>= 1;
 		}
-		
+		// dev_dbg(&fpc1020->spi->dev, "%s %d zones\n", __func__, count);
 		return (int)count;
 	}
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_wake_up(fpc1020_data_t *fpc1020)
 {
 	const fpc1020_status_reg_t status_mask = FPC1020_STATUS_REG_MODE_MASK;
@@ -1943,6 +1986,7 @@ int fpc1020_wake_up(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_sleep(fpc1020_data_t *fpc1020, bool deep_sleep)
 {
 	const char *str_deep = "deep";
@@ -1999,7 +2043,11 @@ int fpc1020_sleep(fpc1020_data_t *fpc1020, bool deep_sleep)
 		gpio_set_value(fpc1020->cs_gpio, 0);
 #endif
 
-	
+	/* Optional: Also disable power supplies in sleep */
+/*
+	if (deep_sleep && sleep_ok)
+		error = fpc1020_regulator_set(fpc1020, false);
+*/
 
 	if (sleep_ok) {
 		dev_dbg(&fpc1020->spi->dev,
@@ -2016,6 +2064,7 @@ int fpc1020_sleep(fpc1020_data_t *fpc1020, bool deep_sleep)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_fetch_image(fpc1020_data_t *fpc1020,
 				u8 *buffer,
 				int offset,
@@ -2091,12 +2140,14 @@ int fpc1020_fetch_image(fpc1020_data_t *fpc1020,
 }
 
 
+/* -------------------------------------------------------------------- */
 bool fpc1020_check_in_range_u64(u64 val, u64 min, u64 max)
 {
 	return (val >= min) && (val <= max);
 }
 
 
+/* -------------------------------------------------------------------- */
 u32 fpc1020_calc_pixel_sum(u8 *buffer, size_t count)
 {
 	size_t index = count;
@@ -2111,6 +2162,7 @@ u32 fpc1020_calc_pixel_sum(u8 *buffer, size_t count)
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_set_finger_drive(fpc1020_data_t *fpc1020, bool enable)
 {
 
@@ -2138,6 +2190,7 @@ out:
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_calc_finger_detect_threshold_min(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -2214,6 +2267,7 @@ int fpc1020_calc_finger_detect_threshold_min(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 int fpc1020_set_finger_detect_threshold(fpc1020_data_t *fpc1020,
 					int measured_val)
 {
@@ -2221,7 +2275,7 @@ int fpc1020_set_finger_detect_threshold(fpc1020_data_t *fpc1020,
 	int new_val;
 	u8 old_val = fpc1020->setup.finger_detect_threshold;
 
-	new_val = measured_val + 40; 
+	new_val = measured_val + 40; // Todo: awaiting calculated values
 
 	if ((measured_val < 0) || (new_val >= 0xff))
 		error = -EINVAL;
@@ -2244,6 +2298,7 @@ int fpc1020_set_finger_detect_threshold(fpc1020_data_t *fpc1020,
 }
 
 
+/* -------------------------------------------------------------------- */
 static int fpc1020_flush_adc(fpc1020_data_t *fpc1020)
 {
 	int error = 0;
@@ -2266,4 +2321,5 @@ static int fpc1020_flush_adc(fpc1020_data_t *fpc1020)
 }
 
 
+/* -------------------------------------------------------------------- */
 

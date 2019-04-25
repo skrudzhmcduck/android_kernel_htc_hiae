@@ -1,3 +1,11 @@
+//********************************************************************************
+//
+//		<< LC898123 Evaluation Soft>>
+//		Program Name	: Ois.h
+// 		Explanation		: LC898123 Global Declaration & ProtType Declaration
+//		Design			: Y.Yamada
+//		History			: First edition	
+//********************************************************************************
 
 #ifdef	OISINI
 	#define	OISINI__
@@ -17,50 +25,62 @@
 	#define	OISCMD__		extern
 #endif
 
+//********** CPU type **********
+//#define		_BIG_ENDIAN_
+
+// Define According To Usage
+
+/****************************** Define説明 ******************************/
+/************************************************************************/
 
 
-
-
+/**************** Model name *****************/
+/**************** FW version *****************/
  #define	MDL_VER			0x04
  #define	FW_VER			0x02
 
+/**************** Select Mode **************/
 
-#define		NEUTRAL_CENTER		
-#define		NEUTRAL_CENTER_FINE		
+#define		NEUTRAL_CENTER		// Upper Position Current 0mA Measurement
+//#define		SEL_CLOSED_AF
+#define		NEUTRAL_CENTER_FINE		// Optimize natural center current
+//#define		COPY_RAM			// Copy calibration data from flash after data write
 
 
 
-#define		EXE_END		0x00000002L		
-#define		EXE_HXADJ	0x00000006L		
-#define		EXE_HYADJ	0x0000000AL		
-#define		EXE_LXADJ	0x00000012L		
-#define		EXE_LYADJ	0x00000022L		
-#define		EXE_GXADJ	0x00000042L		
-#define		EXE_GYADJ	0x00000082L		
-#define		EXE_ERR		0x00000099L		
+// Command Status
+#define		EXE_END		0x00000002L		// Execute End (Adjust OK)
+#define		EXE_HXADJ	0x00000006L		// Adjust NG : X Hall NG (Gain or Offset)
+#define		EXE_HYADJ	0x0000000AL		// Adjust NG : Y Hall NG (Gain or Offset)
+#define		EXE_LXADJ	0x00000012L		// Adjust NG : X Loop NG (Gain)
+#define		EXE_LYADJ	0x00000022L		// Adjust NG : Y Loop NG (Gain)
+#define		EXE_GXADJ	0x00000042L		// Adjust NG : X Gyro NG (offset)
+#define		EXE_GYADJ	0x00000082L		// Adjust NG : Y Gyro NG (offset)
+#define		EXE_ERR		0x00000099L		// Execute Error End
 #ifdef	SEL_CLOSED_AF
- #define	EXE_HZADJ	0x00100002L		
- #define	EXE_LZADJ	0x00200002L		
+ #define	EXE_HZADJ	0x00100002L		// Adjust NG : AF Hall NG (Gain or Offset)
+ #define	EXE_LZADJ	0x00200002L		// Adjust NG : AF Loop NG (Gain)
 #endif
 
 
-#define	SUCCESS			0x00		
-#define	FAILURE			0x01		
+// Common Define
+#define	SUCCESS			0x00		// Success
+#define	FAILURE			0x01		// Failure
 
 #ifndef ON
- #define	ON				0x01		
- #define	OFF				0x00		
+ #define	ON				0x01		// ON
+ #define	OFF				0x00		// OFF
 #endif
-#define	SPC				0x02		
+#define	SPC				0x02		// Special Mode
 
-#define	X_DIR			0x00		
-#define	Y_DIR			0x01		
-#define	Z_DIR			0x02		
+#define	X_DIR			0x00		// X Direction
+#define	Y_DIR			0x01		// Y Direction
+#define	Z_DIR			0x02		// Z Direction(AF)
 
 #define	NOP_TIME		0.00004166F
 
-#define	WPB_OFF			0x01		
-#define WPB_ON			0x00		
+#define	WPB_OFF			0x01		// Write protect OFF
+#define WPB_ON			0x00		// Write protect ON
 
 #define		SXGAIN_LOP		0x30000000
 #define		SYGAIN_LOP		0x30000000
@@ -76,12 +96,12 @@
 struct STFILREG {
 	unsigned short	UsRegAdd ;
 	unsigned char	UcRegDat ;
-} ;													
+} ;													// Register Data Table
 
 struct STFILRAM {
 	unsigned short	UsRamAdd ;
 	unsigned long	UlRamDat ;
-} ;													
+} ;													// Filter Coefficient Table
 
 struct STCMDTBL {
 	unsigned short Cmd ;
@@ -89,87 +109,96 @@ struct STCMDTBL {
 	void ( *UcCmdPtr )( void ) ;
 } ;
 
-#define		CMD_IO_ADR_ACCESS				0xC000				
-#define		CMD_IO_DAT_ACCESS				0xD000				
-#define		CMD_REMAP						0xF001				
-#define		CMD_RETURN_TO_CENTER			0xF010				
-	#define		BOTH_SRV_OFF					0x00000000			
-	#define		XAXS_SRV_ON						0x00000001			
-	#define		YAXS_SRV_ON						0x00000002			
-	#define		BOTH_SRV_ON						0x00000003			
-	#define		ZAXS_SRV_OFF					0x00000004			
-	#define		ZAXS_SRV_ON						0x00000005			
-#define		CMD_PAN_TILT					0xF011				
-	#define		PAN_TILT_OFF					0x00000000			
-	#define		PAN_TILT_ON						0x00000001			
-#define		CMD_OIS_ENABLE					0xF012				
-	#define		OIS_DISABLE						0x00000000			
-	#define		OIS_ENABLE						0x00000001			
-	#define		OIS_ENA_NCL						0x00000002			
-	#define		OIS_ENA_DOF						0x00000004			
-#define		CMD_MOVE_STILL_MODE				0xF013				
-	#define		MOVIE_MODE						0x00000000			
-	#define		STILL_MODE						0x00000001			
-#define		CMD_CHASE_CONFIRMATION			0xF015				
-#define		CMD_GYRO_SIG_CONFIRMATION		0xF016				
-#define		CMD_FLASH_LOAD					0xF017				
+/************************************************/
+/*	Command										*/
+/************************************************/
+#define		CMD_IO_ADR_ACCESS				0xC000				// IO Write Access
+#define		CMD_IO_DAT_ACCESS				0xD000				// IO Read Access
+#define		CMD_REMAP						0xF001				// Remap
+#define		CMD_RETURN_TO_CENTER			0xF010				// Center Servo ON/OFF choose axis
+	#define		BOTH_SRV_OFF					0x00000000			// Both   Servo OFF
+	#define		XAXS_SRV_ON						0x00000001			// X axis Servo ON
+	#define		YAXS_SRV_ON						0x00000002			// Y axis Servo ON
+	#define		BOTH_SRV_ON						0x00000003			// Both   Servo ON
+	#define		ZAXS_SRV_OFF					0x00000004			// Z axis Servo OFF
+	#define		ZAXS_SRV_ON						0x00000005			// Z axis Servo ON
+#define		CMD_PAN_TILT					0xF011				// Pan Tilt Enable/Disable
+	#define		PAN_TILT_OFF					0x00000000			// Pan/Tilt OFF
+	#define		PAN_TILT_ON						0x00000001			// Pan/Tilt ON
+#define		CMD_OIS_ENABLE					0xF012				// Ois Enable/Disable
+	#define		OIS_DISABLE						0x00000000			// OIS Disable
+	#define		OIS_ENABLE						0x00000001			// OIS Enable
+	#define		OIS_ENA_NCL						0x00000002			// OIS Enable ( none Delay clear )
+	#define		OIS_ENA_DOF						0x00000004			// OIS Enable ( Drift offset exec )
+#define		CMD_MOVE_STILL_MODE				0xF013				// Select mode
+	#define		MOVIE_MODE						0x00000000			// Movie mode
+	#define		STILL_MODE						0x00000001			// Still mode
+#define		CMD_CHASE_CONFIRMATION			0xF015				// Hall Chase confirmation
+#define		CMD_GYRO_SIG_CONFIRMATION		0xF016				// Gyro Signal confirmation
+#define		CMD_FLASH_LOAD					0xF017				// Flash Load
+//#define		CMD_FLASH_STORE					0xF018				// Flash Write
 	#define		HALL_CALB_FLG					0x00008000			
 		#define		HALL_CALB_BIT					0x00FF00FF
 	#define		GYRO_GAIN_FLG					0x00004000			
 	#define		ANGL_CORR_FLG					0x00002000			
 	#define		FOCL_GAIN_FLG					0x00001000			
-	#define		CLAF_CALB_FLG					0x00000800			
-#define		CMD_READ_STATUS					0xF100				
+	#define		CLAF_CALB_FLG					0x00000800			// CLAF Hall calibration
+#define		CMD_READ_STATUS					0xF100				// Status Read
 
 #define		READ_STATUS_INI					0x01000000
 
-#define		STBOSCPLL						0x00D00074			
-	#define		OSC_STB							0x00000002			
+#define		STBOSCPLL						0x00D00074			// STB OSC
+	#define		OSC_STB							0x00000002			// OSC standby
 
-#define CmEqSw1			0			
-#define CmEqSw2			1			
-#define CmShakeOn		2			
-#define CmRecMod		4			
-#define CmCofCnt		5			
-#define CmTpdCnt		6			
-#define CmIntDrft		7			
-#define CmAfZoom		0			
-
-
-
-#define	HLXO				0x00000001			
-#define	HLYO				0x00000002			
-#define	HLXBO				0x00000004			
-#define	HLYBO				0x00000008			
-#define	HLAFO				0x00000010			
-#define	HLAFBO				0x00000020			
+/**************************************************** *************************************/
+// GyroFilterDefine.h *******************************************************************
+#define CmEqSw1			0			// Select AD input(0: Off, 1: On)
+#define CmEqSw2			1			// Select Sin wave input(0: Off, 1: On)
+#define CmShakeOn		2			// Setting image stabilization enable(0: Off, 1: On)
+#define CmRecMod		4			// Recording Mode(0: Off, 1: On)
+#define CmCofCnt		5			// Coefficient setting(0: Off, 1: On)
+#define CmTpdCnt		6			// Tripod Cntrol(0: Off, 1: On)
+#define CmIntDrft		7			// Drift Integral Subtraction(0: Off, 1: On)
+#define CmAfZoom		0			// AF Zoom Control
 
 
 
+// Calibration.h *******************************************************************
+#define	HLXO				0x00000001			// D/A Converter Channel Select HLXO
+#define	HLYO				0x00000002			// D/A Converter Channel Select HLYO
+#define	HLXBO				0x00000004			// D/A Converter Channel Select HLXBO
+#define	HLYBO				0x00000008			// D/A Converter Channel Select HLYBO
+#define	HLAFO				0x00000010			// D/A Converter Channel Select HLAFO
+#define	HLAFBO				0x00000020			// D/A Converter Channel Select HLAFBO
+
+
+
+// MeasureFilter.h *******************************************************************
 typedef struct {
-	long				SiSampleNum ;			
-	long				SiSampleMax ;			
+	long				SiSampleNum ;			// Measure Sample Number
+	long				SiSampleMax ;			// Measure Sample Number Max
 
 	struct {
-		long			SiMax1 ;				
-		long			SiMin1 ;				
-		unsigned long	UiAmp1 ;				
-		long long		LLiIntegral1 ;			
-		long long		LLiAbsInteg1 ;			
-		long			PiMeasureRam1 ;			
+		long			SiMax1 ;				// Max Measure Result
+		long			SiMin1 ;				// Min Measure Result
+		unsigned long	UiAmp1 ;				// Amplitude Measure Result
+		long long		LLiIntegral1 ;			// Integration Measure Result
+		long long		LLiAbsInteg1 ;			// Absolute Integration Measure Result
+		long			PiMeasureRam1 ;			// Measure Delay RAM Address
 	} MeasureFilterA ;
 
 	struct {
-		long			SiMax2 ;				
-		long			SiMin2 ;				
-		unsigned long	UiAmp2 ;				
-		long long		LLiIntegral2 ;			
-		long long		LLiAbsInteg2 ;			
-		long			PiMeasureRam2 ;			
+		long			SiMax2 ;				// Max Measure Result
+		long			SiMin2 ;				// Min Measure Result
+		unsigned long	UiAmp2 ;				// Amplitude Measure Result
+		long long		LLiIntegral2 ;			// Integration Measure Result
+		long long		LLiAbsInteg2 ;			// Absolute Integration Measure Result
+		long			PiMeasureRam2 ;			// Measure Delay RAM Address
 	} MeasureFilterB ;
 } MeasureFunction_Type ;
 
 
+/********************************************************/
 
 
 
@@ -183,9 +212,12 @@ typedef struct {
 
 
 
+/*** caution [little-endian] ***/
 
 
 #ifdef _BIG_ENDIAN_
+// Big endian
+// Word Data Union
 union	WRDVAL{
 	  signed short	SsWrdVal ;
 	unsigned short	UsWrdVal ;
@@ -223,6 +255,7 @@ union	ULLNVAL {
 } ;
 
 
+// Float Data Union
 union	FLTVAL {
 	float			SfFltVal ;
 	unsigned long	UlLngVal ;
@@ -233,7 +266,9 @@ union	FLTVAL {
 	} StFltVal ;
 } ;
 
-#else	
+#else	// BIG_ENDDIAN
+// Little endian
+// Word Data Union
 union	WRDVAL{
 	  signed short	SsWrdVal ;
 	unsigned short	UsWrdVal ;
@@ -270,6 +305,7 @@ union	ULLNVAL {
 	} StUllnVal ;
 } ;
 
+// Float Data Union
 union	FLTVAL {
 	float			SfFltVal ;
 	unsigned long	UlLngVal ;
@@ -279,7 +315,7 @@ union	FLTVAL {
 		unsigned short	UsHigVal ;
 	} StFltVal ;
 } ;
-#endif	
+#endif	// _BIG_ENDIAN_
 
 typedef union WRDVAL	UnWrdVal ;
 typedef union DWDVAL	UnDwdVal;
@@ -289,87 +325,88 @@ typedef union FLTVAL	UnFltVal ;
 
 typedef struct STADJPAR {
 	struct {
-		unsigned long	UlAdjPhs ;				
+		unsigned long	UlAdjPhs ;				// Hall Adjust Phase
 
-		unsigned short	UsHlxCna ;				
-		unsigned short	UsHlxMax ;				
-		unsigned short	UsHlxMxa ;				
-		unsigned short	UsHlxMin ;				
-		unsigned short	UsHlxMna ;				
-		unsigned short	UsHlxGan ;				
-		unsigned short	UsHlxOff ;				
-		unsigned short	UsAdxOff ;				
-		unsigned short	UsHlxCen ;				
+		unsigned short	UsHlxCna ;				// Hall Center Value after Hall Adjust
+		unsigned short	UsHlxMax ;				// Hall Max Value
+		unsigned short	UsHlxMxa ;				// Hall Max Value after Hall Adjust
+		unsigned short	UsHlxMin ;				// Hall Min Value
+		unsigned short	UsHlxMna ;				// Hall Min Value after Hall Adjust
+		unsigned short	UsHlxGan ;				// Hall Gain Value
+		unsigned short	UsHlxOff ;				// Hall Offset Value
+		unsigned short	UsAdxOff ;				// Hall A/D Offset Value
+		unsigned short	UsHlxCen ;				// Hall Center Value
 
-		unsigned short	UsHlyCna ;				
-		unsigned short	UsHlyMax ;				
-		unsigned short	UsHlyMxa ;				
-		unsigned short	UsHlyMin ;				
-		unsigned short	UsHlyMna ;				
-		unsigned short	UsHlyGan ;				
-		unsigned short	UsHlyOff ;				
-		unsigned short	UsAdyOff ;				
-		unsigned short	UsHlyCen ;				
+		unsigned short	UsHlyCna ;				// Hall Center Value after Hall Adjust
+		unsigned short	UsHlyMax ;				// Hall Max Value
+		unsigned short	UsHlyMxa ;				// Hall Max Value after Hall Adjust
+		unsigned short	UsHlyMin ;				// Hall Min Value
+		unsigned short	UsHlyMna ;				// Hall Min Value after Hall Adjust
+		unsigned short	UsHlyGan ;				// Hall Gain Value
+		unsigned short	UsHlyOff ;				// Hall Offset Value
+		unsigned short	UsAdyOff ;				// Hall A/D Offset Value
+		unsigned short	UsHlyCen ;				// Hall Center Value
 
 #ifdef	SEL_CLOSED_AF
-		unsigned short	UsHlzCna ;				
-		unsigned short	UsHlzMax ;				
-		unsigned short	UsHlzMxa ;				
-		unsigned short	UsHlzMin ;				
-		unsigned short	UsHlzMna ;				
-		unsigned short	UsHlzGan ;				
-		unsigned short	UsHlzOff ;				
-		unsigned short	UsAdzOff ;				
-		unsigned short	UsHlzCen ;				
+		unsigned short	UsHlzCna ;				// Z Hall Center Value after Hall Adjust
+		unsigned short	UsHlzMax ;				// Z Hall Max Value
+		unsigned short	UsHlzMxa ;				// Z Hall Max Value after Hall Adjust
+		unsigned short	UsHlzMin ;				// Z Hall Min Value
+		unsigned short	UsHlzMna ;				// Z Hall Min Value after Hall Adjust
+		unsigned short	UsHlzGan ;				// Z Hall Gain Value
+		unsigned short	UsHlzOff ;				// Z Hall Offset Value
+		unsigned short	UsAdzOff ;				// Z Hall A/D Offset Value
+		unsigned short	UsHlzCen ;				// Z Hall Center Value
 #endif
 	} StHalAdj ;
 
 	struct {
-		unsigned long	UlLxgVal ;				
-		unsigned long	UlLygVal ;				
+		unsigned long	UlLxgVal ;				// Loop Gain X
+		unsigned long	UlLygVal ;				// Loop Gain Y
 #ifdef	SEL_CLOSED_AF
-		unsigned long	UlLzgVal ;				
+		unsigned long	UlLzgVal ;				// Loop Gain Z
 #endif
 	} StLopGan ;
 
 	struct {
-		unsigned short	UsGxoVal ;				
-		unsigned short	UsGyoVal ;				
-		unsigned short	UsGxoSts ;				
-		unsigned short	UsGyoSts ;				
+		unsigned short	UsGxoVal ;				// Gyro A/D Offset X
+		unsigned short	UsGyoVal ;				// Gyro A/D Offset Y
+		unsigned short	UsGxoSts ;				// Gyro Offset X Status
+		unsigned short	UsGyoSts ;				// Gyro Offset Y Status
 	} StGvcOff ;
 	
-	unsigned char		UcOscVal ;				
+	unsigned char		UcOscVal ;				// OSC value
 
 } stAdjPar ;
 
-OISCMD__	stAdjPar	StAdjPar ;				
+OISCMD__	stAdjPar	StAdjPar ;				// Execute Command Parameter
 
-OISCMD__ void			WitTim( unsigned short ) ;											
-OISCMD__ void			MemClr( unsigned char *, unsigned short ) ;							
+// Prottype Declation
+OISCMD__ void			WitTim( unsigned short ) ;											// Wait
+OISCMD__ void			MemClr( unsigned char *, unsigned short ) ;							// Memory Clear Function
 	
-OISCMD__ void			SrvCon( unsigned char, unsigned char ) ;					
-OISCMD__ unsigned long	TneRun( void ) ;											
+OISCMD__ void			SrvCon( unsigned char, unsigned char ) ;					// Servo ON/OFF
+OISCMD__ unsigned long	TneRun( void ) ;											// Hall System Auto Adjustment Function
 #ifdef	SEL_CLOSED_AF
-OISCMD__ unsigned long	TneRunZ( void ) ;											
-OISCMD__ unsigned long	TneRunA( void ) ;											
+OISCMD__ unsigned long	TneRunZ( void ) ;											// Hall System Auto Adjustment Function
+OISCMD__ unsigned long	TneRunA( void ) ;											// AF + OIS auto adjustment Function
 #endif
-OISCMD__ unsigned char	RtnCen( unsigned char ) ;									
+OISCMD__ unsigned char	RtnCen( unsigned char ) ;									// Return to Center Function
 	#define		BOTH_ON			0x00
 	#define		XONLY_ON		0x01
 	#define		YONLY_ON		0x02
 	#define		BOTH_OFF		0x03
 	#define		ZONLY_OFF		0x04
 	#define		ZONLY_ON		0x05
-OISCMD__ void			OisEna( void ) ;											
-OISCMD__ void			OisEnaNCL( void ) ;											
-OISCMD__ void			OisEnaDrCl( void ) ;										
-OISCMD__ void			OisEnaDrNcl( void ) ;										
-OISCMD__ void			OisDis( void ) ;											
-OISCMD__ void			SetRec( void ) ;											
-OISCMD__ void			SetStill( void ) ;											
-OISCMD__ void			TimPro( void ) ;											
-OISCMD__ void			SetSinWavePara( unsigned char , unsigned char ) ;			
+OISCMD__ void			OisEna( void ) ;											// OIS Enable Function
+OISCMD__ void			OisEnaNCL( void ) ;											// OIS Enable Function w/o delay clear
+OISCMD__ void			OisEnaDrCl( void ) ;										// OIS Enable Function with drift control with delay clear
+OISCMD__ void			OisEnaDrNcl( void ) ;										// OIS Enable Function with drift control w/o delay clear
+OISCMD__ void			OisDis( void ) ;											// OIS Disable Function
+OISCMD__ void			SetRec( void ) ;											// Rec Mode Enable Function
+OISCMD__ void			SetStill( void ) ;											// Still Mode Enable Function
+OISCMD__ void			TimPro( void ) ;											// Timer Interrupt Process Function
+OISCMD__ void			SetSinWavePara( unsigned char , unsigned char ) ;			// Sin wave Test Function
 	#define		SINEWAVE	0
 	#define		XHALWAVE	1
 	#define		YHALWAVE	2
@@ -377,37 +414,37 @@ OISCMD__ void			SetSinWavePara( unsigned char , unsigned char ) ;
 	#define		XACTTEST	10
 	#define		YACTTEST	11
 	#define		CIRCWAVE	255
-OISCMD__ unsigned long	TneGvc( void ) ;											
+OISCMD__ unsigned long	TneGvc( void ) ;											// Gyro VC Offset Adjust
 
-OISCMD__ unsigned long	LopGan( unsigned char ) ;									
+OISCMD__ unsigned long	LopGan( unsigned char ) ;									// Loop Gain Adjust
 
-OISCMD__ void			SetPanTiltMode( unsigned char ) ;							
-OISCMD__ unsigned long	TnePtp( unsigned char, unsigned char ) ;					
-	#define		HALL_H_VAL	0x3F800000			
-OISCMD__ unsigned long	TneCen( unsigned char, UnDwdVal ) ;							
+OISCMD__ void			SetPanTiltMode( unsigned char ) ;							/* Pan_Tilt control Function */
+OISCMD__ unsigned long	TnePtp( unsigned char, unsigned char ) ;					// Get Hall Peak to Peak Values
+	#define		HALL_H_VAL	0x3F800000			/* 1.0 */
+OISCMD__ unsigned long	TneCen( unsigned char, UnDwdVal ) ;							// Tuning Hall Center
  #define		PTP_BEFORE		0
  #define		PTP_AFTER		1
  #define		PTP_ACCEPT		2
-OISCMD__ unsigned char	DrvPwmSw( unsigned char ) ;											
-	#define		Mlnp		0					
-	#define		Mpwm		1					
- #ifdef	NEUTRAL_CENTER											
- OISCMD__ unsigned char	TneHvc( void ) ;											
- #endif	
+OISCMD__ unsigned char	DrvPwmSw( unsigned char ) ;											// Select Driver mode Function
+	#define		Mlnp		0					// Linear PWM
+	#define		Mpwm		1					// PWM
+ #ifdef	NEUTRAL_CENTER											// Gyro VC Offset Adjust
+ OISCMD__ unsigned char	TneHvc( void ) ;											// Hall VC Offset Adjust
+ #endif	//NEUTRAL_CENTER
 
 #ifdef	NEUTRAL_CENTER_FINE
  OISCMD__ void	TneFin( void ) ;
-#endif	
+#endif	//NEUTRAL_CENTER_FINE
 
-OISCMD__	void	IniNvc( short, short ) ;											
-OISCMD__	void	TneSltPos( unsigned char ) ;										
-OISCMD__	void	TneVrtPos( unsigned char ) ;										
-OISCMD__ 	void	TneHrzPos( unsigned char ) ;										
+OISCMD__	void	IniNvc( short, short ) ;											// for NVC
+OISCMD__	void	TneSltPos( unsigned char ) ;										// for NVC
+OISCMD__	void	TneVrtPos( unsigned char ) ;										// for NVC
+OISCMD__ 	void	TneHrzPos( unsigned char ) ;										// for NVC
 OISCMD__ 	unsigned short	TneADO( void ) ;
 
-OISCMD__	void	SetSinWavGenInt( void ) ;											
-OISCMD__	void	SetTransDataAdr( unsigned short  , unsigned long  ) ;											
-OISCMD__	unsigned short	RdFwVr( void ) ;										
+OISCMD__	void	SetSinWavGenInt( void ) ;											// Hall VC Offset Adjust
+OISCMD__	void	SetTransDataAdr( unsigned short  , unsigned long  ) ;											// Hall VC Offset Adjust
+OISCMD__	unsigned short	RdFwVr( void ) ;										// Read Fw Version Function
 OISCMD__	unsigned char	RdStatus( unsigned char );
 
 OISCMD__	void	DacControl( unsigned char , unsigned long , unsigned long  ) ;
@@ -454,12 +491,14 @@ OISCMD__	int		WriteMagicCode( short );
 OISCMD__	unsigned long GetFromVer( void );
 
 OISCMD__	unsigned short MakeMainSel( unsigned short );
+/* HTC_START */
 #if 0
 OISCMD__	unsigned short MakeNVRSel( unsigned short );
 
 OISCMD__	unsigned long MakeNVRDat( unsigned short, unsigned char );
 OISCMD__	unsigned char MakeDatNVR( unsigned short, unsigned long );
 #endif
+/* HTC_END */
 OISCMD__	unsigned long MakeMainDat( unsigned short, unsigned char );
 OISCMD__	unsigned char MakeDatMain( unsigned short, unsigned long );
 OISCMD__	void	ReadBytes( unsigned short, unsigned char *, unsigned short );
@@ -468,6 +507,8 @@ OISCMD__	void	WriteBytes( unsigned short, unsigned char *, unsigned short );
 OISCMD__	void	OscStb( void );
 OISCMD__	unsigned char FrqDet( void );
 
+/*******************************************************************************
+ ******************************************************************************/
 #define GET_UINT32(n,b)						\
 {											\
 	(n) = ( (unsigned long) (b)[0]       )	\
@@ -507,6 +548,9 @@ OISCMD__	unsigned char FrqDet( void );
 	(b)[0] = (unsigned char) ( (n) >>  8 );	\
 }
 
+//==============================================================================
+// Calibration Data Memory Map
+//==============================================================================
 #define	CALIBRATION_DATA_ADDRESS	0x0100
 #define	USER_AREA_ADDRESS			0x01B0
 
@@ -514,27 +558,37 @@ unsigned char	Flash_Sector[ 256 ];
 
 #define	FLASH_SECTOR_BUFFER		Flash_Sector
 
+// Calibration Status
 #define	CALIBRATION_STATUS		( FLASH_SECTOR_BUFFER + 0x00000000 )
+// Hall amplitude Calibration X
 #define	HALL_MAX_BEFORE_X		( FLASH_SECTOR_BUFFER + 0x00000004 )
 #define	HALL_MIN_BEFORE_X		( FLASH_SECTOR_BUFFER + 0x00000008 )
 #define	HALL_MAX_AFTER_X		( FLASH_SECTOR_BUFFER + 0x0000000C )
 #define	HALL_MIN_AFTER_X		( FLASH_SECTOR_BUFFER + 0x00000010 )
+// Hall amplitude Calibration Y
 #define	HALL_MAX_BEFORE_Y		( FLASH_SECTOR_BUFFER + 0x00000014 )
 #define	HALL_MIN_BEFORE_Y		( FLASH_SECTOR_BUFFER + 0x00000018 )
 #define	HALL_MAX_AFTER_Y		( FLASH_SECTOR_BUFFER + 0x0000001C )
 #define	HALL_MIN_AFTER_Y		( FLASH_SECTOR_BUFFER + 0x00000020 )
+// Hall Bias/Offset
 #define	HALL_BIAS_DAC_X			( FLASH_SECTOR_BUFFER + 0x00000024 )
 #define	HALL_OFFSET_DAC_X		( FLASH_SECTOR_BUFFER + 0x00000028 )
 #define	HALL_BIAS_DAC_Y			( FLASH_SECTOR_BUFFER + 0x0000002C )
 #define	HALL_OFFSET_DAC_Y		( FLASH_SECTOR_BUFFER + 0x00000030 )
+// Loop Gain Calibration X
 #define	LOOP_GAIN_VALUE_X		( FLASH_SECTOR_BUFFER + 0x00000034 )
+// Loop Gain Calibration Y
 #define	LOOP_GAIN_VALUE_Y		( FLASH_SECTOR_BUFFER + 0x00000038 )
+// Lens Center Calibration
 #define	LENS_CENTER_VALUE_X		( FLASH_SECTOR_BUFFER + 0x0000003C )
 #define	LENS_CENTER_VALUE_Y		( FLASH_SECTOR_BUFFER + 0x00000040 )
+// Optical Center Calibration
 #define	OPT_CENTER_VALUE_X		( FLASH_SECTOR_BUFFER + 0x00000044 )
 #define	OPT_CENTER_VALUE_Y		( FLASH_SECTOR_BUFFER + 0x00000048 )
+// Gyro Offset Calibration
 #define	GYRO_OFFSET_VALUE_X		( FLASH_SECTOR_BUFFER + 0x0000004C )
 #define	GYRO_OFFSET_VALUE_Y		( FLASH_SECTOR_BUFFER + 0x00000050 )
+// Gyro Gain Calibration
 #define	GYRO_GAIN_VALUE_X		( FLASH_SECTOR_BUFFER + 0x00000054 )
 #define	GYRO_GAIN_VALUE_Y		( FLASH_SECTOR_BUFFER + 0x00000058 )
 #define HALL_BIAS_DAC_AF		( FLASH_SECTOR_BUFFER + 0x0000005C )
@@ -555,6 +609,7 @@ unsigned char	Flash_Sector[ 256 ];
 #define USER_AREA_TOP			( FLASH_SECTOR_BUFFER + 0x000000B0 )
 #define USER_AREA_END			( FLASH_SECTOR_BUFFER + 0x000000FF )
 
+// User area data
 #define POS1_X					( USER_AREA_TOP + 0x00000000 )
 #define POS1_Y					( USER_AREA_TOP + 0x00000002 )
 #define SIZE1_X					( USER_AREA_TOP + 0x00000004 )
@@ -572,27 +627,30 @@ unsigned char	Flash_Sector[ 256 ];
 #define CORRELATION_X			( USER_AREA_TOP + 0x0000001C )
 #define CORRELATION_Y			( USER_AREA_TOP + 0x0000001E )
 
+//==============================================================================
+//DMA
+//==============================================================================
 #define		SinWaveC						0x00b8
 #define			SinWaveC_Pt						0x0000 + SinWaveC
 #define			SinWaveC_Regsiter				0x0004 + SinWaveC_Pt
 #define			SinWaveC_SignFlag				0x0004 + SinWaveC_Regsiter
 
 #define		SinWave							0x00c4
-				
+				// SinGenerator.h SinWave_t
 #define			SinWave_Offset					0x0000 + SinWave
 #define			SinWave_Phase					0x0004 + SinWave_Offset
 #define			SinWave_Gain					0x0004 + SinWave_Phase
 #define			SinWave_Output					0x0004 + SinWave_Gain
 #define			SinWave_OutAddr					0x0004 + SinWave_Output
 #define		CosWave							0x00d8
-				
+				// SinGenerator.h SinWave_t
 #define			CosWave_Offset					0x0000 + CosWave
 #define			CosWave_Phase					0x0004 + CosWave_Offset
 #define			CosWave_Gain					0x0004 + CosWave_Phase
 #define			CosWave_Output					0x0004 + CosWave_Gain
 #define			CosWave_OutAddr					0x0004 + CosWave_Output
 #define		GYRO_RAM_COMMON					0x00ec
-				
+				// GyroFilterDelay.h GYRO_RAM_COMMON_t
 #define			GYRO_RAM_GX_ADIDAT				0x0000 + GYRO_RAM_COMMON
 #define			GYRO_RAM_GY_ADIDAT				0x0004 + GYRO_RAM_GX_ADIDAT
 #define			GYRO_RAM_SINDX					0x0004 + GYRO_RAM_GY_ADIDAT
@@ -607,10 +665,10 @@ unsigned char	Flash_Sector[ 256 ];
 #define			GYRO_RAM_GYRO_LimitY			0x0004 + GYRO_RAM_GYRO_LimitX
 #define			GYRO_RAM_GYROX_AFCnt			0x0004 + GYRO_RAM_GYRO_LimitY
 #define			GYRO_RAM_GYROY_AFCnt			0x0004 + GYRO_RAM_GYROX_AFCnt
-#define			GYRO_RAM_GYRO_Switch			0x0004 + GYRO_RAM_GYROY_AFCnt		
-#define			GYRO_RAM_GYRO_AF_Switch			0x0001 + GYRO_RAM_GYRO_Switch		
+#define			GYRO_RAM_GYRO_Switch			0x0004 + GYRO_RAM_GYROY_AFCnt		// 1Byte
+#define			GYRO_RAM_GYRO_AF_Switch			0x0001 + GYRO_RAM_GYRO_Switch		// 1Byte
 #define		GYRO_RAM_X						0x0128
-				
+				// GyroFilterDelay.h GYRO_RAM_t
 #define			GYRO_RAM_GYROX_OFFSET			0x0000 + GYRO_RAM_X
 #define			GYRO_RAM_GX2X4XF_IN				0x0004 + GYRO_RAM_GYROX_OFFSET
 #define			GYRO_RAM_GX2X4XF_OUT			0x0004 + GYRO_RAM_GX2X4XF_IN
@@ -621,7 +679,7 @@ unsigned char	Flash_Sector[ 256 ];
 #define			GYRO_RAM_GYROX_G3OUT			0x0004 + GYRO_RAM_GYROX_G2OUT
 #define			GYRO_RAM_GYROX_OUT				0x0004 + GYRO_RAM_GYROX_G3OUT
 #define		GYRO_RAM_Y						0x014c
-				
+				// GyroFilterDelay.h GYRO_RAM_t
 #define			GYRO_RAM_GYROY_OFFSET			0x0000 + GYRO_RAM_Y
 #define			GYRO_RAM_GY2X4XF_IN				0x0004 + GYRO_RAM_GYROY_OFFSET
 #define			GYRO_RAM_GY2X4XF_OUT			0x0004 + GYRO_RAM_GY2X4XF_IN
@@ -632,11 +690,11 @@ unsigned char	Flash_Sector[ 256 ];
 #define			GYRO_RAM_GYROY_G3OUT			0x0004 + GYRO_RAM_GYROY_G2OUT
 #define			GYRO_RAM_GYROY_OUT				0x0004 + GYRO_RAM_GYROY_G3OUT
 #define		GyroFilterDelayX				0x0170
-#define		GyroFilterDelayX_GXH1Z2			0x0184	
+#define		GyroFilterDelayX_GXH1Z2			0x0184	// delay3[1]
 #define		GyroFilterDelayY				0x0198
-#define		GyroFilterDelayY_GYH1Z2			0x01ac	
+#define		GyroFilterDelayY_GYH1Z2			0x01ac	// delay3[1]
 #define		HALL_RAM_COMMON					0x01c0
-				
+				//  HallFilterDelay.h HALL_RAM_COMMON_t
 #define			HALL_RAM_HXIDAT					0x0000 + HALL_RAM_COMMON
 #define			HALL_RAM_HYIDAT					0x0004 + HALL_RAM_HXIDAT
 #define			HALL_RAM_GYROX_OUT				0x0004 + HALL_RAM_HYIDAT
@@ -644,7 +702,7 @@ unsigned char	Flash_Sector[ 256 ];
 #define		HallFilterDelayX				0x01d0
 #define		HallFilterDelayY				0x0220
 #define		HALL_RAM_X						0x0270
-				
+				//  HallFilterDelay.h HALL_RAM_t
 #define			HALL_RAM_HXOFF					0x0000 + HALL_RAM_X
 #define			HALL_RAM_HXOFF1					0x0004 + HALL_RAM_HXOFF
 #define			HALL_RAM_HXOUT0					0x0004 + HALL_RAM_HXOFF1
@@ -653,10 +711,10 @@ unsigned char	Flash_Sector[ 256 ];
 #define			HALL_RAM_HXLOP					0x0004 + HALL_RAM_SINDX0
 #define			HALL_RAM_SINDX1					0x0004 + HALL_RAM_HXLOP
 #define			HALL_RAM_HALL_X_OUT				0x0004 + HALL_RAM_SINDX1
-					
+					// MoveAvg	2ch
 #define		HALL_RAM_HALL_SwitchX			0x02bc
 #define		HALL_RAM_Y						0x02c0
-				
+				//  HallFilterDelay.h HALL_RAM_t
 #define			HALL_RAM_HYOFF					0x0000 + HALL_RAM_Y
 #define			HALL_RAM_HYOFF1					0x0004 + HALL_RAM_HYOFF
 #define			HALL_RAM_HYOUT0					0x0004 + HALL_RAM_HYOFF1
@@ -665,7 +723,7 @@ unsigned char	Flash_Sector[ 256 ];
 #define			HALL_RAM_HYLOP					0x0004 + HALL_RAM_SINDY0
 #define			HALL_RAM_SINDY1					0x0004 + HALL_RAM_HYLOP
 #define			HALL_RAM_HALL_Y_OUT				0x0004 + HALL_RAM_SINDY1
-					
+					// MoveAvg	2ch
 #define		HALL_RAM_HALL_SwitchY			0x030c
 
 #define		HXOFF1							0x0310
@@ -713,12 +771,12 @@ unsigned char	Flash_Sector[ 256 ];
 #define			CLAF_DELAY_AFOZ0				0x0004 + CLAF_DELAY_AFPZ3
 #define			CLAF_DELAY_AFOZ1				0x0004 + CLAF_DELAY_AFOZ0
 #define		WaitTimerData					0x0468
-				
+				// CommonLibrary.h  WaitTimer_Type
 #define			WaitTimerData_UiWaitCounter		0x0000 + WaitTimerData
 #define			WaitTimerData_UiTargetCount		0x0004 + WaitTimerData_UiWaitCounter
 #define			WaitTimerData_UiBaseCount		0x0004 + WaitTimerData_UiTargetCount
 #define		StMeasureFunc					0x0478
-				
+				// MeasureFilter.h	MeasureFunction_Type
 #define			StMeasFunc_SiSampleNum			0x0000 + StMeasureFunc
 #define			StMeasFunc_SiSampleMax			0x0004 + StMeasFunc_SiSampleNum
 #define		StMeasFunc_MFA					0x0480
@@ -738,20 +796,20 @@ unsigned char	Flash_Sector[ 256 ];
 #define			StMeasFunc_MFB_LLiAbsInteg2		0x0008 + StMeasFunc_MFB_LLiIntegral2
 #define			StMeasFunc_MFB_PiMeasureRam2	0x0008 + StMeasFunc_MFB_LLiAbsInteg2
 #define		MeasureFilterA_Delay			0x04D0
-				
+				// MeasureFilter.h	MeasureFilter_Delay_Type
 #define			MeasureFilterA_Delay_z11		0x0000 + MeasureFilterA_Delay
 #define			MeasureFilterA_Delay_z12		0x0004 + MeasureFilterA_Delay_z11
 #define			MeasureFilterA_Delay_z21		0x0004 + MeasureFilterA_Delay_z12
 #define			MeasureFilterA_Delay_z22		0x0004 + MeasureFilterA_Delay_z21
 #define		MeasureFilterB_Delay			0x04E0
-				
+				// MeasureFilter.h	MeasureFilter_Delay_Type
 #define			MeasureFilterB_Delay_z11		0x0000 + MeasureFilterB_Delay
 #define			MeasureFilterB_Delay_z12		0x0004 + MeasureFilterB_Delay_z11
 #define			MeasureFilterB_Delay_z21		0x0004 + MeasureFilterB_Delay_z12
 #define			MeasureFilterB_Delay_z22		0x0004 + MeasureFilterB_Delay_z21
 #define		MeasureParameter				0x04F0
 #define		StCalibrationData				0x04FC
-				
+				// Calibration.h  CalibrationData_Type
 #define			StCaliData_UsCalibrationStatus	0x0000 + StCalibrationData
 #define			StCaliData_SiHallMax_Before_X	0x0004 + StCaliData_UsCalibrationStatus
 #define			StCaliData_SiHallMin_Before_X	0x0004 + StCaliData_SiHallMax_Before_X
@@ -804,10 +862,13 @@ unsigned char	Flash_Sector[ 256 ];
 
 
 
+//==============================================================================
+//DMB
+//==============================================================================
 #define		SiVerNum						0x8000
 #define		WaveCoeff						0x8004
 #define		MeasureFilterA_Coeff			0x80a4
-				
+				// MeasureFilter.h  MeasureFilter_Type
 #define			MeasureFilterA_Coeff_b1			0x0000 + MeasureFilterA_Coeff
 #define			MeasureFilterA_Coeff_c1			0x0004 + MeasureFilterA_Coeff_b1
 #define			MeasureFilterA_Coeff_a1			0x0004 + MeasureFilterA_Coeff_c1
@@ -815,7 +876,7 @@ unsigned char	Flash_Sector[ 256 ];
 #define			MeasureFilterA_Coeff_c2			0x0004 + MeasureFilterA_Coeff_b2
 #define			MeasureFilterA_Coeff_a2			0x0004 + MeasureFilterA_Coeff_c2
 #define		MeasureFilterB_Coeff			0x80bc
-				
+				// MeasureFilter.h  MeasureFilter_Type
 #define			MeasureFilterB_Coeff_b1			0x0000 + MeasureFilterB_Coeff
 #define			MeasureFilterB_Coeff_c1			0x0004 + MeasureFilterB_Coeff_b1
 #define			MeasureFilterB_Coeff_a1			0x0004 + MeasureFilterB_Coeff_c1
@@ -827,7 +888,7 @@ unsigned char	Flash_Sector[ 256 ];
 #define		ASCII_Table						0x80e8
 #define		CommandDeocdeTable				0x80f8
 #define		HallFilterCoeffX				0x8138
-				
+				// HallFilterCoeff.h  DM_HFC_t
 #define			HallFilterCoeffX_HXIGAIN		0x0000 + HallFilterCoeffX
 #define			HallFilterCoeffX_GYROXOUTGAIN	0x0004 + HallFilterCoeffX_HXIGAIN
 #define			HallFilterCoeffX_HXOFFGAIN		0x0004 + HallFilterCoeffX_GYROXOUTGAIN
@@ -871,7 +932,7 @@ unsigned char	Flash_Sector[ 256 ];
 #define			HallFilterCoeffX_hxpe			0x0004 + HallFilterCoeffX_hxpd
 #define			HallFilterCoeffX_hxpa			0x0004 + HallFilterCoeffX_hxpe
 #define		HallFilterCoeffY				0x81d4
-				
+				// HallFilterCoeff.h  DM_HFC_t
 #define			HallFilterCoeffY_HYIGAIN		0x0000 + HallFilterCoeffY
 #define			HallFilterCoeffY_GYROYOUTGAIN	0x0004 + HallFilterCoeffY_HYIGAIN
 #define			HallFilterCoeffY_HYOFFGAIN		0x0004 + HallFilterCoeffY_GYROYOUTGAIN
@@ -917,7 +978,7 @@ unsigned char	Flash_Sector[ 256 ];
 #define		HallFilterShiftX				0x82a0
 #define		HallFilterShiftY				0x82a6
 #define		GyroFilterTableX				0x82ac
-				
+				// GyroFilterCoeff.h  DM_GFC_t
 #define			GyroFilterTableX_gx45x			0x0000 + GyroFilterTableX
 #define			GyroFilterTableX_gx45y			0x0004 + GyroFilterTableX_gx45x
 #define			GyroFilterTableX_gxgyro			0x0004 + GyroFilterTableX_gx45y
@@ -943,7 +1004,7 @@ unsigned char	Flash_Sector[ 256 ];
 #define			GyroFilterTableX_gxt2a			0x0004 + GyroFilterTableX_gxt2c	
 #define			GyroFilterTableX_afzoom			0x0004 + GyroFilterTableX_gxt2a
 #define		GyroFilterTableY				0x830c
-				
+				// GyroFilterCoeff.h  DM_GFC_t
 #define			GyroFilterTableY_gy45y			0x0000 + GyroFilterTableY
 #define			GyroFilterTableY_gy45x			0x0004 + GyroFilterTableY_gy45y
 #define			GyroFilterTableY_gygyro			0x0004 + GyroFilterTableY_gy45x
@@ -969,13 +1030,13 @@ unsigned char	Flash_Sector[ 256 ];
 #define			GyroFilterTableY_gyt2a			0x0004 + GyroFilterTableY_gyt2c
 #define			GyroFilterTableY_afzoom			0x0004 + GyroFilterTableY_gyt2a
 #define		GF_LimitX						0x836c
-				
+				// GyroFilterCoeff.h  GF_Limit_t
 #define			GF_LimitX_ILIMT					0x0000 + GF_LimitX
 #define			GF_LimitX_JLIMT					0x0004 + GF_LimitX_ILIMT
 #define			GF_LimitX_HLIMT					0x0004 + GF_LimitX_JLIMT
 
 #define		GF_LimitY						0x8378
-				
+				// GyroFilterCoeff.h  GF_Limit_t
 #define			GF_LimitY_ILIMT					0x0000 + GF_LimitY
 #define			GF_LimitY_JLIMT					0x0004 + GF_LimitY_ILIMT
 #define			GF_LimitY_HLIMT					0x0004 + GF_LimitY_JLIMT
@@ -1038,19 +1099,22 @@ unsigned char	Flash_Sector[ 256 ];
 #define		OLAF_DMB						0x85C8
 #define		UCFLASHBUFF						0x85D8
 
+//==============================================================================
+//IO
+//==============================================================================
 
-#define SYSCONT_123		0xD00000	
+#define SYSCONT_123		0xD00000	// System Control配置アドレス
 #define 		SYS_DSP_REMAP						(SYSCONT_123 + 0xAC)
 
-#define CVER_123		0xD00100	
+#define CVER_123		0xD00100	// LSI Version 読み出しアドレス
 #define		CVER_123A						0x000000B4
 
-#define SOFTRESET		0xD0006C	
-#define OSCRSEL			0xD00090	
-#define OSCCURSEL		0xD00094	
+#define SOFTRESET		0xD0006C	// Soft reset setting
+#define OSCRSEL			0xD00090	// OSC Frequency 1
+#define OSCCURSEL		0xD00094	// OSC Frequency 2
 
-#define ADDA_123		0xD01000	
-				
+#define ADDA_123		0xD01000	// A/D & D/A I/F配置アドレス
+				// LC898123_DMIO.h  ADDA_t
 #define 		ADDA_reserve0_0						0x0000 + ADDA_123
 #define 		ADDA_reserve0_1						0x0004 + ADDA_reserve0_0
 #define 		ADDA_FSCTRL							0x0004 + ADDA_reserve0_1	
@@ -1074,14 +1138,14 @@ unsigned char	Flash_Sector[ 256 ];
 #define 		ADDA_DASEL							0x0004 + ADDA_DASWAP		
 #define 		ADDA_DAO							0x0004 + ADDA_DASEL		
 
-#define PWM_123			0xD02000	
-#define PORT_123		0xE00000	
-#define TIMER_123		0xE01000	
-#define SPIM_123		0xE02000	
-#define SPIS_123		0xE03000	
-#define UART_123		0xE04000	
-#define I2CS_123		0xE05000	
-#define FLASHROM_123	0xE07000	
+#define PWM_123			0xD02000	// PWM I/F配置アドレス
+#define PORT_123		0xE00000	// PORT I/F配置アドレス
+#define TIMER_123		0xE01000	// TIMER I/F配置アドレス
+#define SPIM_123		0xE02000	// SPI Master I/F配置アドレス
+#define SPIS_123		0xE03000	// SPI Slave I/F配置アドレス
+#define UART_123		0xE04000	// UART I/F配置アドレス
+#define I2CS_123		0xE05000	// I2C Slave配置アドレス
+#define FLASHROM_123	0xE07000	// Flash Memory I/F配置アドレス
 #define 		FLASHROM_RDAT						(FLASHROM_123 + 0x00) 
 #define 		FLASHROM_WDAT						(FLASHROM_123 + 0x04) 
 #define 		FLASHROM_ADR						(FLASHROM_123 + 0x08) 
@@ -1104,7 +1168,7 @@ unsigned char	Flash_Sector[ 256 ];
 #define 		FLASHROM_TERASEC					(FLASHROM_123 + 0x4C) 
 #define 		FLASHROM_TRW						(FLASHROM_123 + 0x50) 
 
-#define DHIF_123		0xE09000	
+#define DHIF_123		0xE09000	// Digital Hall I/F配置アドレス
 
 
 

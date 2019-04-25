@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -32,12 +32,14 @@
 			<&clock_gcc clk_gcc_camss_csi0phytimer_clk>,
 			<&clock_gcc clk_camss_top_ahb_clk_src>,
 			<&clock_gcc clk_gcc_camss_csi0phy_clk>,
+			<&clock_gcc clk_gcc_camss_csi1phy_clk>,
+			<&clock_gcc clk_gcc_camss_csi2phy_clk>,
 			<&clock_gcc clk_gcc_camss_ahb_clk>;
 		clock-names = "camss_top_ahb_clk", "ispif_ahb_clk",
 			"csiphy_timer_src_clk", "csiphy_timer_clk",
-			"camss_ahb_src", "csi_phy_clk",
-			"camss_ahb_clk";
-		qcom,clock-rates = <0 61540000 200000000 0 0 0 0>;
+			"camss_ahb_src", "csi0_phy_clk", "csi1_phy_clk",
+			"csi2_phy_clk", "camss_ahb_clk";
+		qcom,clock-rates = <0 61540000 200000000 0 0 0 0 0 0>;
 	};
 
 	qcom,csiphy@1b0b000 {
@@ -53,13 +55,15 @@
 			<&clock_gcc clk_csi1phytimer_clk_src>,
 			<&clock_gcc clk_gcc_camss_csi1phytimer_clk>,
 			<&clock_gcc clk_camss_top_ahb_clk_src>,
+			<&clock_gcc clk_gcc_camss_csi0phy_clk>,
 			<&clock_gcc clk_gcc_camss_csi1phy_clk>,
+			<&clock_gcc clk_gcc_camss_csi2phy_clk>,
 			<&clock_gcc clk_gcc_camss_ahb_clk>;
 		clock-names = "camss_top_ahb_clk", "ispif_ahb_clk",
 			"csiphy_timer_src_clk", "csiphy_timer_clk",
-			"camss_ahb_src", "csi_phy_clk",
-			"camss_ahb_clk";
-		qcom,clock-rates = <0 61540000 200000000 0 0 0 0>;
+			"camss_ahb_src", "csi0_phy_clk", "csi1_phy_clk",
+			"csi2_phy_clk", "camss_ahb_clk";
+		qcom,clock-rates = <0 61540000 200000000 0 0 0 0 0 0>;
 	};
 
 	qcom,csid@1b08000  {
@@ -234,7 +238,7 @@
 				0xcccc0011	0xcccc0011
 				0xcccc0011	0x00000110>;
 			max-clk-nominal = <320000000>;
-			max-clk-turbo = <460000000>;
+			max-clk-turbo = <466000000>;
 		};
 
 		vfe1: qcom,vfe1@1b14000 {
@@ -284,7 +288,7 @@
 				0xcccc0011	0xcccc0011
 				0xcccc0011	0x00000110>;
 			max-clk-nominal = <320000000>;
-			max-clk-turbo = <460000000>;
+			max-clk-turbo = <466000000>;
 		};
 	};
 
@@ -369,6 +373,14 @@
 		qcom,clock-rates = <0 240000000 0 0 240000000 0 0>;
 		qcom,min-clock-rate = <160000000>;
 		bus_master = <1>;
+		qcom,cpp-fw-payload-info {
+			qcom,stripe-base = <156>;
+			qcom,plane-base = <141>;
+			qcom,stripe-size = <27>;
+			qcom,plane-size = <5>;
+			qcom,fe-ptr-off = <5>;
+			qcom,we-ptr-off = <11>;
+		};
 	};
 
 	cci: qcom,cci@1b0c000 {
@@ -380,17 +392,17 @@
 		reg-names = "cci";
 		interrupts = <0 50 0>;
 		interrupt-names = "cci";
-		clocks = <&clock_gcc clk_gcc_camss_top_ahb_clk>,
+		clocks = <&clock_gcc clk_gcc_camss_ispif_ahb_clk>,
 			<&clock_gcc clk_cci_clk_src>,
 			<&clock_gcc clk_gcc_camss_cci_ahb_clk>,
 			<&clock_gcc clk_gcc_camss_cci_clk>,
 			<&clock_gcc clk_gcc_camss_ahb_clk>,
-			<&clock_gcc clk_gcc_camss_ispif_ahb_clk>;
-		clock-names = "camss_top_ahb_clk", "cci_src_clk",
+			<&clock_gcc clk_gcc_camss_top_ahb_clk>;
+		clock-names = "ispif_ahb_clk", "cci_src_clk",
 			"cci_ahb_clk", "camss_cci_clk",
-			"camss_ahb_clk", "ispif_ahb_clk";
-		qcom,clock-rates = <0 19200000 0 0 0 61540000>,
-				<0 37500000 0 0 0 61540000>;
+			"camss_ahb_clk", "camss_top_ahb_clk";
+		qcom,clock-rates = <61540000 19200000 0 0 0 0>,
+				<61540000 37500000 0 0 0 0>;
 		pinctrl-names = "cci_default", "cci_suspend";
 			pinctrl-0 = <&cci0_active &cci1_active>;
 			pinctrl-1 = <&cci0_suspend &cci1_suspend>;

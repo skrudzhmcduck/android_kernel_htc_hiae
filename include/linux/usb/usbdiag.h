@@ -65,6 +65,22 @@
 		else \
 			pr_debug("[DIAGSDLOG] " fmt, ## args); \
 	} while (0)
+
+#define DIAGSOCKET_ERR(fmt, args...) \
+	printk(KERN_ERR "[DIAGSOCKET:ERR] " fmt, ## args)
+#define DIAGSOCKET_WARNING(fmt, args...) \
+	printk(KERN_WARNING "[DIAGSOCKET] " fmt, ## args)
+#define DIAGSOCKET_INFO(fmt, args...) \
+	printk(KERN_INFO "[DIAGSOCKET] " fmt, ## args)
+#define DIAGSOCKET_DBUG(fmt, args...) \
+	do { \
+		if (diag7k_debug_mask) \
+			printk(KERN_INFO "[DIAGSOCKET]" fmt, ## args); \
+		else \
+			pr_debug("[DIAGSOCKET] " fmt, ## args); \
+	} while (0)
+
+
 #define DIAG_XPST 1		
 #define DIAG_LEGACY		"diag"
 #define DIAG_MDM		"diag_mdm"

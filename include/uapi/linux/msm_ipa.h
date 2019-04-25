@@ -197,6 +197,10 @@ enum ipa_client_type {
 	IPA_CLIENT_MAX,
 };
 
+#define IPA_CLIENT_IS_APPS_CONS(client) \
+	((client) == IPA_CLIENT_APPS_LAN_CONS || \
+	(client) == IPA_CLIENT_APPS_WAN_CONS)
+
 #define IPA_CLIENT_IS_USB_CONS(client) \
 	((client) == IPA_CLIENT_USB_CONS || \
 	(client) == IPA_CLIENT_USB2_CONS || \
@@ -221,10 +225,32 @@ enum ipa_client_type {
 	(client) == IPA_CLIENT_Q6_DECOMP_CONS || \
 	(client) == IPA_CLIENT_Q6_DECOMP2_CONS)
 
+#define IPA_CLIENT_IS_Q6_NON_ZIP_CONS(client) \
+	((client) == IPA_CLIENT_Q6_LAN_CONS || \
+	(client) == IPA_CLIENT_Q6_WAN_CONS || \
+	(client) == IPA_CLIENT_Q6_DUN_CONS)
+
 #define IPA_CLIENT_IS_Q6_PROD(client) \
 	((client) == IPA_CLIENT_Q6_LAN_PROD || \
 	(client) == IPA_CLIENT_Q6_CMD_PROD || \
 	(client) == IPA_CLIENT_Q6_DECOMP_PROD || \
+	(client) == IPA_CLIENT_Q6_DECOMP2_PROD)
+
+#define IPA_CLIENT_IS_Q6_NON_ZIP_CONS(client) \
+	((client) == IPA_CLIENT_Q6_LAN_CONS || \
+	(client) == IPA_CLIENT_Q6_WAN_CONS || \
+	(client) == IPA_CLIENT_Q6_DUN_CONS)
+
+#define IPA_CLIENT_IS_Q6_ZIP_CONS(client) \
+	((client) == IPA_CLIENT_Q6_DECOMP_CONS || \
+	(client) == IPA_CLIENT_Q6_DECOMP2_CONS)
+
+#define IPA_CLIENT_IS_Q6_NON_ZIP_PROD(client) \
+	((client) == IPA_CLIENT_Q6_LAN_PROD || \
+	(client) == IPA_CLIENT_Q6_CMD_PROD)
+
+#define IPA_CLIENT_IS_Q6_ZIP_PROD(client) \
+	((client) == IPA_CLIENT_Q6_DECOMP_PROD || \
 	(client) == IPA_CLIENT_Q6_DECOMP2_PROD)
 
 #define IPA_CLIENT_IS_MEMCPY_DMA_CONS(client) \

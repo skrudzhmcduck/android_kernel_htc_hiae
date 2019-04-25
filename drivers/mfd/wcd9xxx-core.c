@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,6 +23,7 @@
 #include <linux/mfd/wcd9xxx/core-resource.h>
 #include <linux/mfd/wcd9xxx/pdata.h>
 #include <linux/mfd/wcd9xxx/wcd9xxx_registers.h>
+#include <linux/mfd/wcd9xxx/wcd-gpio-ctrl.h>
 #include <linux/mfd/wcd9335/registers.h>
 
 #include <linux/delay.h>
@@ -60,6 +61,8 @@
 #define SLIM_REPEAT_WRITE_MAX_SLICE 16
 #define REG_BYTES 2
 #define VAL_BYTES 1
+#define WCD9XXX_PAGE_NUM(reg)    (((reg) >> 8) & 0xff)
+
 #undef pr_info
 #undef pr_err
 #define pr_info(fmt, ...) pr_aud_info(fmt, ##__VA_ARGS__)
@@ -83,6 +86,7 @@ static struct pinctrl_info pinctrl_info;
 static struct regmap_config wcd9xxx_base_regmap_config = {
 	.reg_bits = 16,
 	.val_bits = 8,
+	.can_multi_write = true,
 };
 
 static const int wcd9xxx_cdc_types[] = {
@@ -324,6 +328,65 @@ static int wcd9xxx_write(struct wcd9xxx *wcd9xxx, unsigned short reg,
 	return wcd9xxx->write_dev(wcd9xxx, reg, bytes, src, interface_reg);
 }
 
+static int regmap_slim_multi_reg_write(void *context,
+				const void *data, size_t count)
+{
+	struct device *dev = context;
+	struct wcd9xxx *wcd9xxx = dev_get_drvdata(dev);
+	unsigned int reg;
+	u8 val[WCD9335_PAGE_SIZE];
+	int ret = 0;
+	int i = 0;
+	int n = 0;
+	unsigned int page_num;
+	size_t num_regs = (count / (REG_BYTES + VAL_BYTES));
+	struct wcd9xxx_reg_val *bulk_reg;
+	u8 *buf;
+
+	if (!wcd9xxx) {
+		dev_err(dev, "%s: wcd9xxx is NULL\n", __func__);
+		return -EINVAL;
+	}
+	if (!data) {
+		dev_err(dev, "%s: data is NULL\n", __func__);
+		return -EINVAL;
+	}
+	if (num_regs == 0)
+		return -EINVAL;
+
+	bulk_reg = kzalloc(num_regs * (sizeof(struct wcd9xxx_reg_val)),
+			   GFP_KERNEL);
+	if (!bulk_reg)
+		return -ENOMEM;
+
+	buf = (u8 *)data;
+	reg = *(u16 *)buf;
+	page_num = WCD9XXX_PAGE_NUM(reg);
+	for (i = 0, n = 0; n < num_regs; i++, n++) {
+		reg = *(u16 *)buf;
+		if (page_num != WCD9XXX_PAGE_NUM(reg)) {
+			ret = wcd9xxx_slim_bulk_write(wcd9xxx, bulk_reg,
+						      i, false);
+			page_num = WCD9XXX_PAGE_NUM(reg);
+			i = 0;
+		}
+		buf += REG_BYTES;
+		val[i] = *buf;
+		buf += VAL_BYTES;
+		bulk_reg[i].reg = reg;
+		bulk_reg[i].buf = &val[i];
+		bulk_reg[i].bytes = 1;
+	}
+	ret = wcd9xxx_slim_bulk_write(wcd9xxx, bulk_reg,
+				      i, false);
+	if (ret)
+		dev_err(dev, "%s: error writing bulk regs\n",
+			__func__);
+
+	kfree(bulk_reg);
+	return ret;
+}
+
 static int regmap_slim_gather_write(void *context,
 				const void *reg, size_t reg_size,
 				const void *val, size_t val_size)
@@ -376,7 +439,10 @@ static int regmap_slim_write(void *context, const void *data, size_t count)
 {
 	WARN_ON(count < REG_BYTES);
 
-	return regmap_slim_gather_write(context, data, REG_BYTES,
+	if (count > (REG_BYTES + VAL_BYTES))
+		return regmap_slim_multi_reg_write(context, data, count);
+	else
+		return regmap_slim_gather_write(context, data, REG_BYTES,
 					data + REG_BYTES,
 					count - REG_BYTES);
 }
@@ -803,7 +869,7 @@ int wcd9xxx_slim_bulk_write(struct wcd9xxx *wcd9xxx,
 		pr_err("%s: Error, Codec bulk write failed (%d)\n",
 			__func__, ret);
 	
-	usleep_range(700, 710);
+	usleep_range(100, 110);
 err:
 	mutex_unlock(&wcd9xxx->io_lock);
 	kfree(msgs);
@@ -916,18 +982,32 @@ static const struct wcd9xxx_codec_type wcd9xxx_codecs[] = {
 		ARRAY_SIZE(tasha_devs), TASHA_NUM_IRQS, -1,
 		WCD9XXX_SLIM_SLAVE_ADDR_TYPE_TAIKO, 0x01
 	},
+	{
+		TASHA2P0_MAJOR, cpu_to_le16(0x1), tasha_devs,
+		ARRAY_SIZE(tasha_devs), TASHA_NUM_IRQS, 2,
+		WCD9XXX_SLIM_SLAVE_ADDR_TYPE_TAIKO, 0x01
+	},
 };
 
-static void wcd9335_bring_up(struct wcd9xxx *wcd9xxx)
+static int wcd9335_bring_up(struct wcd9xxx *wcd9xxx)
 {
-	int val;
+	int val, byte0;
+	int ret = 0;
 
 	val = __wcd9xxx_reg_read(wcd9xxx,
 				 WCD9335_CHIP_TIER_CTRL_EFUSE_VAL_OUT0);
-	pr_debug("%s: codec version %s 1.0\n", __func__,
-		 ((val & 0x80) ? "greater than" : "is"));
+	byte0 = __wcd9xxx_reg_read(wcd9xxx,
+				   WCD9335_CHIP_TIER_CTRL_CHIP_ID_BYTE0);
 
-	if (val & 0x80) {
+	if ((val < 0) || (byte0 < 0)) {
+		dev_err(wcd9xxx->dev, "%s: tasha codec version detection fail!\n",
+			__func__);
+		return -EINVAL;
+	}
+
+	if ((val & 0x80) && (byte0 == 0x0)) {
+		dev_info(wcd9xxx->dev, "%s: wcd9335 codec version is v1.1\n",
+			 __func__);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9335_CODEC_RPM_RST_CTL, 0x01);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9335_SIDO_SIDO_CCL_2, 0xFC);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9335_SIDO_SIDO_CCL_4, 0x21);
@@ -938,36 +1018,52 @@ static void wcd9335_bring_up(struct wcd9xxx *wcd9xxx)
 		__wcd9xxx_reg_write(wcd9xxx,
 				    WCD9335_CODEC_RPM_PWR_CDC_DIG_HM_CTL, 0x3);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9335_CODEC_RPM_RST_CTL, 0x3);
-	} else {
+	} else if (byte0 == 0x1) {
+		dev_info(wcd9xxx->dev, "%s: wcd9335 codec version is v2.0\n",
+			 __func__);
+		__wcd9xxx_reg_write(wcd9xxx, WCD9335_CODEC_RPM_RST_CTL, 0x01);
+		__wcd9xxx_reg_write(wcd9xxx, WCD9335_SIDO_SIDO_TEST_2, 0x00);
+		__wcd9xxx_reg_write(wcd9xxx, WCD9335_SIDO_SIDO_CCL_8, 0x6F);
+		__wcd9xxx_reg_write(wcd9xxx, WCD9335_BIAS_VBG_FINE_ADJ, 0x65);
+		__wcd9xxx_reg_write(wcd9xxx,
+				    WCD9335_CODEC_RPM_PWR_CDC_DIG_HM_CTL, 0x5);
+		__wcd9xxx_reg_write(wcd9xxx,
+				    WCD9335_CODEC_RPM_PWR_CDC_DIG_HM_CTL, 0x7);
+		__wcd9xxx_reg_write(wcd9xxx,
+				    WCD9335_CODEC_RPM_PWR_CDC_DIG_HM_CTL, 0x3);
+		__wcd9xxx_reg_write(wcd9xxx, WCD9335_CODEC_RPM_RST_CTL, 0x3);
+	} else if ((byte0 == 0) && (!(val & 0x80))) {
+		dev_info(wcd9xxx->dev, "%s: wcd9335 codec version is v1.0\n",
+			 __func__);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9335_CODEC_RPM_RST_CTL, 0x01);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9335_SIDO_SIDO_CCL_2, 0xFC);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9335_SIDO_SIDO_CCL_4, 0x21);
 		__wcd9xxx_reg_write(wcd9xxx,
 				    WCD9335_CODEC_RPM_PWR_CDC_DIG_HM_CTL, 0x3);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9335_CODEC_RPM_RST_CTL, 0x3);
+	} else {
+		dev_err(wcd9xxx->dev, "%s: tasha codec version unknown\n",
+			__func__);
+		ret = -EINVAL;
 	}
+
+	return ret;
 }
 
 static void wcd9335_bring_down(struct wcd9xxx *wcd9xxx)
 {
-	int val;
-
-	val = __wcd9xxx_reg_read(wcd9xxx,
-				 WCD9335_CHIP_TIER_CTRL_EFUSE_VAL_OUT0);
-	if (val & 0x80)
-		__wcd9xxx_reg_write(wcd9xxx,
-				    WCD9335_CODEC_RPM_PWR_CDC_DIG_HM_CTL, 0x4);
-	else
-		__wcd9xxx_reg_write(wcd9xxx,
-				    WCD9335_CODEC_RPM_PWR_CDC_DIG_HM_CTL, 0x7);
+	__wcd9xxx_reg_write(wcd9xxx,
+			WCD9335_CODEC_RPM_PWR_CDC_DIG_HM_CTL, 0x4);
 }
 
-static void wcd9xxx_bring_up(struct wcd9xxx *wcd9xxx)
+static int wcd9xxx_bring_up(struct wcd9xxx *wcd9xxx)
 {
+	int ret = 0;
+
 	pr_debug("%s: Codec Type: %d\n", __func__, wcd9xxx->type);
 
 	if (wcd9xxx->type == WCD9335) {
-		wcd9335_bring_up(wcd9xxx);
+		ret = wcd9335_bring_up(wcd9xxx);
 	} else if (wcd9xxx->type == WCD9330) {
 		__wcd9xxx_reg_write(wcd9xxx, WCD9330_A_LEAKAGE_CTL, 0x4);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9330_A_CDC_CTL, 0);
@@ -983,6 +1079,8 @@ static void wcd9xxx_bring_up(struct wcd9xxx *wcd9xxx)
 		__wcd9xxx_reg_write(wcd9xxx, WCD9XXX_A_CDC_CTL, 3);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9XXX_A_LEAKAGE_CTL, 3);
 	}
+
+	return ret;
 }
 
 static void wcd9xxx_bring_down(struct wcd9xxx *wcd9xxx)
@@ -1007,6 +1105,27 @@ static int wcd9xxx_reset(struct wcd9xxx *wcd9xxx)
 {
 	int ret;
 	struct wcd9xxx_pdata *pdata = wcd9xxx->dev->platform_data;
+
+	if (wcd9xxx->wcd_rst_np) {
+		
+		ret = wcd_gpio_ctrl_select_sleep_state(wcd9xxx->wcd_rst_np);
+		if (ret) {
+			pr_err("%s: wcd sleep pinctrl state fail!\n",
+					__func__);
+			return ret;
+		}
+		
+		msleep(20);
+		ret = wcd_gpio_ctrl_select_active_state(wcd9xxx->wcd_rst_np);
+		if (ret) {
+			pr_err("%s: wcd active pinctrl state fail!\n",
+					__func__);
+			return ret;
+		}
+		
+		msleep(20);
+		return 0;
+	}
 
 	if (wcd9xxx->reset_gpio && wcd9xxx->slim_device_bootup
 			&& !pdata->use_pinctrl) {
@@ -1050,6 +1169,12 @@ static int wcd9xxx_reset(struct wcd9xxx *wcd9xxx)
 static void wcd9xxx_free_reset(struct wcd9xxx *wcd9xxx)
 {
 	struct wcd9xxx_pdata *pdata = wcd9xxx->dev->platform_data;
+
+	if (wcd9xxx->wcd_rst_np) {
+		wcd_gpio_ctrl_select_sleep_state(wcd9xxx->wcd_rst_np);
+		return;
+	}
+
 	if (wcd9xxx->reset_gpio) {
 		if (!pdata->use_pinctrl) {
 			gpio_free(wcd9xxx->reset_gpio);
@@ -1323,6 +1448,7 @@ static void wcd9xxx_core_res_update_irq_regs(
 {
 	switch (id_major) {
 	case TASHA_MAJOR:
+	case TASHA2P0_MAJOR:
 		core_res->intr_reg[WCD9XXX_INTR_STATUS_BASE] =
 					WCD9335_INTR_PIN1_STATUS0;
 		core_res->intr_reg[WCD9XXX_INTR_CLEAR_BASE] =
@@ -1358,12 +1484,17 @@ static int wcd9xxx_device_init(struct wcd9xxx *wcd9xxx)
 	u8 version;
 	const struct wcd9xxx_codec_type *found;
 	struct wcd9xxx_core_resource *core_res = &wcd9xxx->core_res;
+	regmap_patch_fptr regmap_apply_patch = NULL;
 
 	mutex_init(&wcd9xxx->io_lock);
 	mutex_init(&wcd9xxx->xfer_lock);
 
 	dev_set_drvdata(wcd9xxx->dev, wcd9xxx);
-	wcd9xxx_bring_up(wcd9xxx);
+	ret = wcd9xxx_bring_up(wcd9xxx);
+	if (ret) {
+		ret = -EPROBE_DEFER;
+		goto err_bring_up;
+	}
 
 	found = wcd9xxx_check_codec_type(wcd9xxx, &version);
 	if (!found) {
@@ -1384,7 +1515,8 @@ static int wcd9xxx_device_init(struct wcd9xxx *wcd9xxx)
 	} else if (wcd9xxx->codec_type->id_major == TOMTOM_MAJOR) {
 		core_res->intr_table = intr_tbl_v3;
 		core_res->intr_table_size = ARRAY_SIZE(intr_tbl_v3);
-	} else if (wcd9xxx->codec_type->id_major == TASHA_MAJOR) {
+	} else if ((wcd9xxx->codec_type->id_major == TASHA_MAJOR) ||
+		  (wcd9xxx->codec_type->id_major == TASHA2P0_MAJOR)) {
 		core_res->intr_table = intr_tbl_v4;
 		core_res->intr_table_size = ARRAY_SIZE(intr_tbl_v4);
 	} else {
@@ -1408,6 +1540,16 @@ static int wcd9xxx_device_init(struct wcd9xxx *wcd9xxx)
 		ret = wcd9xxx_regmap_init_cache(wcd9xxx);
 		if (ret)
 			goto err_irq;
+
+		regmap_apply_patch = wcd9xxx_get_regmap_reg_patch(
+							wcd9xxx->type);
+		if (regmap_apply_patch) {
+			ret = regmap_apply_patch(wcd9xxx->regmap,
+					   wcd9xxx->version);
+			if (ret)
+				dev_err(wcd9xxx->dev,
+					"Failed to register patch: %d\n", ret);
+		}
 	}
 
 	ret = mfd_add_devices(wcd9xxx->dev, -1, found->dev, found->size,
@@ -1429,6 +1571,7 @@ err_irq:
 err:
 	wcd9xxx_bring_down(wcd9xxx);
 	wcd9xxx_core_res_deinit(&wcd9xxx->core_res);
+err_bring_up:
 	mutex_destroy(&wcd9xxx->io_lock);
 	mutex_destroy(&wcd9xxx->xfer_lock);
 	return ret;
@@ -1544,6 +1687,15 @@ static void wcd9xxx_set_reset_pin_state(struct wcd9xxx *wcd9xxx,
 					struct wcd9xxx_pdata *pdata,
 					bool active)
 {
+	if (wcd9xxx->wcd_rst_np) {
+		if (active)
+			wcd_gpio_ctrl_select_active_state(wcd9xxx->wcd_rst_np);
+		else
+			wcd_gpio_ctrl_select_sleep_state(wcd9xxx->wcd_rst_np);
+
+		return;
+	}
+
 	if (pdata->use_pinctrl) {
 		if (active == true)
 			pinctrl_select_state(pinctrl_info.pinctrl,
@@ -1988,11 +2140,18 @@ static int wcd9xxx_i2c_probe(struct i2c_client *client,
 			ret = -EINVAL;
 			goto fail;
 		}
-		ret = extcodec_get_pinctrl(&client->dev);
-		if (ret < 0)
-			pdata->use_pinctrl = false;
-		else
+		wcd9xxx->reset_gpio = pdata->reset_gpio;
+		wcd9xxx->wcd_rst_np = pdata->wcd_rst_np;
+
+		if (!wcd9xxx->wcd_rst_np) {
+			ret = extcodec_get_pinctrl(&client->dev);
+			if (ret < 0)
+				pdata->use_pinctrl = false;
+			else
+				pdata->use_pinctrl = true;
+		} else {
 			pdata->use_pinctrl = true;
+		}
 
 		if (i2c_check_functionality(client->adapter,
 					    I2C_FUNC_I2C) == 0) {
@@ -2002,7 +2161,6 @@ static int wcd9xxx_i2c_probe(struct i2c_client *client,
 		}
 		dev_set_drvdata(&client->dev, wcd9xxx);
 		wcd9xxx->dev = &client->dev;
-		wcd9xxx->reset_gpio = pdata->reset_gpio;
 		wcd9xxx->slim_device_bootup = true;
 		if (client->dev.of_node)
 			wcd9xxx->mclk_rate = pdata->mclk_rate;
@@ -2043,8 +2201,8 @@ static int wcd9xxx_i2c_probe(struct i2c_client *client,
 
 		ret = wcd9xxx_device_init(wcd9xxx);
 		if (ret) {
-			pr_err("%s: error, initializing device failed\n",
-			       __func__);
+			pr_err("%s: error, initializing device failed (%d)\n",
+			       __func__, ret);
 			goto err_device_init;
 		}
 
@@ -2417,15 +2575,19 @@ static struct wcd9xxx_pdata *wcd9xxx_populate_dt_pdata(struct device *dev)
 	if (ret)
 		goto err;
 
-	pdata->reset_gpio = of_get_named_gpio(dev->of_node,
+	pdata->wcd_rst_np = of_parse_phandle(dev->of_node,
+					     "qcom,wcd-rst-gpio-node", 0);
+	if (!pdata->wcd_rst_np) {
+		pdata->reset_gpio = of_get_named_gpio(dev->of_node,
 				"qcom,cdc-reset-gpio", 0);
-	if (pdata->reset_gpio < 0) {
-		dev_err(dev, "Looking up %s property in node %s failed %d\n",
-			"qcom, cdc-reset-gpio", dev->of_node->full_name,
-			pdata->reset_gpio);
-		goto err;
+		if (pdata->reset_gpio < 0) {
+			dev_err(dev, "Looking up %s property in node %s failed %d\n",
+				"qcom, cdc-reset-gpio",
+				dev->of_node->full_name, pdata->reset_gpio);
+			goto err;
+		}
+		dev_dbg(dev, "%s: reset gpio %d", __func__, pdata->reset_gpio);
 	}
-	dev_dbg(dev, "%s: reset gpio %d", __func__, pdata->reset_gpio);
 	ret = of_property_read_u32(dev->of_node,
 				   "qcom,cdc-mclk-clk-rate",
 				   &mclk_rate);
@@ -2653,12 +2815,17 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	wcd9xxx->dev = &slim->dev;
 	wcd9xxx->mclk_rate = pdata->mclk_rate;
 	wcd9xxx->slim_device_bootup = true;
+	wcd9xxx->wcd_rst_np = pdata->wcd_rst_np;
 
-	ret = extcodec_get_pinctrl(&slim->dev);
-	if (ret < 0)
-		pdata->use_pinctrl = false;
-	else
+	if (!wcd9xxx->wcd_rst_np) {
+		ret = extcodec_get_pinctrl(&slim->dev);
+		if (ret < 0)
+			pdata->use_pinctrl = false;
+		else
+			pdata->use_pinctrl = true;
+	} else {
 		pdata->use_pinctrl = true;
+	}
 
 	ret = wcd9xxx_init_supplies(wcd9xxx, pdata);
 	if (ret) {
@@ -2688,6 +2855,7 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	if (ret) {
 		pr_err("%s: failed to get slimbus %s logical address: %d\n",
 		       __func__, wcd9xxx->slim->name, ret);
+		ret = -EPROBE_DEFER;
 #ifdef CONFIG_HTC_DEBUG_DSP
 		pr_info("%s:trigger ramdump to keep status\n",__func__);
 		BUG();
@@ -2715,6 +2883,7 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	if (ret) {
 		pr_err("%s: failed to get slimbus %s logical address: %d\n",
 		       __func__, wcd9xxx->slim->name, ret);
+		ret = -EPROBE_DEFER;
 #ifdef CONFIG_HTC_DEBUG_DSP
 		pr_info("%s:trigger ramdump to keep status\n",__func__);
 		BUG();
@@ -2726,7 +2895,8 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 
 	ret = wcd9xxx_device_init(wcd9xxx);
 	if (ret) {
-		pr_err("%s: error, initializing device failed\n", __func__);
+		pr_err("%s: error, initializing device failed (%d)\n",
+			__func__, ret);
 		goto err_slim_add;
 	}
 #ifdef CONFIG_DEBUG_FS
@@ -2818,6 +2988,7 @@ static int wcd9xxx_slim_device_reset(struct slim_device *sldev)
 	dev_info(wcd9xxx->dev, "%s: device reset\n", __func__);
 	if (wcd9xxx->slim_device_bootup)
 		return 0;
+
 	ret = wcd9xxx_reset(wcd9xxx);
 	if (ret)
 		dev_err(wcd9xxx->dev, "%s: Resetting Codec failed\n", __func__);

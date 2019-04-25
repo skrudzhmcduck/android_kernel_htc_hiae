@@ -14,6 +14,7 @@
 #include <media/v4l2-subdev.h>
 #include <media/msmb_isp.h>
 #include "msm_isp_util.h"
+#include "msm_isp_axi_util.h"
 #include "msm_isp_stats_util.h"
 
 static int msm_isp_stats_cfg_ping_pong_address(struct vfe_device *vfe_dev,
@@ -42,7 +43,12 @@ static int msm_isp_stats_cfg_ping_pong_address(struct vfe_device *vfe_dev,
 
 	pingpong_bit = (~(pingpong_status >> stats_pingpong_offset) & 0x1);
 	rc = vfe_dev->buf_mgr->ops->get_buf(vfe_dev->buf_mgr,
-			vfe_dev->pdev->id, bufq_handle, &buf, &buf_cnt);
+			vfe_dev->pdev->id, bufq_handle, &buf, &buf_cnt,
+			pingpong_bit);
+	if (rc == -EFAULT) {
+		msm_isp_halt_send_error(vfe_dev, ISP_EVENT_BUF_FATAL_ERROR);
+		return rc;
+	}
 	if (rc < 0) {
 		vfe_dev->error_info.stats_framedrop_count[stats_idx]++;
 		return rc;
@@ -59,7 +65,7 @@ static int msm_isp_stats_cfg_ping_pong_address(struct vfe_device *vfe_dev,
 			!dual_vfe_res->stats_data[ISP_VFE0] ||
 			!dual_vfe_res->vfe_base[ISP_VFE1] ||
 			!dual_vfe_res->stats_data[ISP_VFE1]) {
-			pr_err("%s:%d error vfe0 %p %p vfe1 %p %p\n", __func__,
+			pr_err("%s:%d error vfe0 %pK %pK vfe1 %pK %pK\n", __func__,
 				__LINE__, dual_vfe_res->vfe_base[ISP_VFE0],
 				dual_vfe_res->stats_data[ISP_VFE0],
 				dual_vfe_res->vfe_base[ISP_VFE1],
@@ -108,7 +114,7 @@ static int32_t msm_isp_stats_buf_divert(struct vfe_device *vfe_dev,
 
 	if (!vfe_dev || !done_buf || !ts || !buf_event || !stream_info ||
 		!comp_stats_type_mask) {
-		pr_err("%s:%d failed: invalid params %p %p %p %p %p %p\n",
+		pr_err("%s:%d failed: invalid params %pK %pK %pK %pK %pK %pK\n",
 			__func__, __LINE__, vfe_dev, done_buf, ts, buf_event,
 			stream_info, comp_stats_type_mask);
 		return -EINVAL;
@@ -119,10 +125,8 @@ static int32_t msm_isp_stats_buf_divert(struct vfe_device *vfe_dev,
 
 	if (sw_skip->stats_type_mask &
 		(1 << stream_info->stats_type)) {
-		/* Hw stream output of this src is requested
-		   for drop */
 		if (sw_skip->skip_mode == SKIP_ALL) {
-			/* drop all buffers */
+			
 			drop_buffer = 1;
 		} else if (sw_skip->skip_mode == SKIP_RANGE &&
 		(sw_skip->min_frame_id <= frame_id &&
@@ -192,7 +196,7 @@ static int32_t msm_isp_stats_configure(struct vfe_device *vfe_dev,
 	uint32_t comp_stats_type_mask = 0;
 
 	memset(&buf_event, 0, sizeof(struct msm_isp_event_data));
-	buf_event.timestamp = ts->event_time;
+	buf_event.timestamp = ts->buf_time;
 	buf_event.frame_id = vfe_dev->axi_data.src_info[VFE_PIX_0].frame_id;
 	pingpong_status = vfe_dev->hw_info->
 		vfe_ops.stats_ops.get_pingpong_status(vfe_dev);
@@ -203,7 +207,7 @@ static int32_t msm_isp_stats_configure(struct vfe_device *vfe_dev,
 		stream_info = &vfe_dev->stats_data.stream_info[i];
 
 		if (stream_info->state == STATS_INACTIVE) {
-			pr_warn("%s: Warning! Stream already inactive. Drop irq handling\n",
+			pr_debug("%s: Warning! Stream already inactive. Drop irq handling\n",
 				__func__);
 			continue;
 		}
@@ -253,13 +257,13 @@ void msm_isp_process_stats_irq(struct vfe_device *vfe_dev,
 	ISP_DBG("%s: vfe %d status: 0x%x\n", __func__, vfe_dev->pdev->id,
 		irq_status0);
 
-	/* Clear composite mask irq bits, they will be restored by comp mask */
+	
 	for (j = 0; j < num_stats_comp_mask; j++) {
 		stats_irq_mask &= ~atomic_read(
 			&vfe_dev->stats_data.stats_comp_mask[j]);
 	}
 
-	/* Process non-composite irq */
+	
 	if (stats_irq_mask) {
 		rc = msm_isp_stats_configure(vfe_dev, stats_irq_mask, ts,
 			comp_flag);
@@ -269,7 +273,7 @@ void msm_isp_process_stats_irq(struct vfe_device *vfe_dev,
 		}
 	}
 
-	/* Process composite irq */
+	
 	if (stats_comp_mask) {
 		for (j = 0; j < num_stats_comp_mask; j++) {
 			if (!(stats_comp_mask & (1 << j)))
@@ -799,12 +803,12 @@ int msm_isp_update_stats_stream(struct vfe_device *vfe_dev, void *arg)
 	struct msm_vfe_axi_stream_cfg_update_info *update_info = NULL;
 	struct msm_isp_sw_framskip *sw_skip_info = NULL;
 
-	/*validate request*/
+	
 	for (i = 0; i < update_cmd->num_streams; i++) {
 		update_info = &update_cmd->update_info[i];
-		/*check array reference bounds*/
+		
 		if (STATS_IDX(update_info->stream_handle)
-			> vfe_dev->hw_info->stats_hw_info->num_stats_type) {
+			>= vfe_dev->hw_info->stats_hw_info->num_stats_type) {
 			pr_err("%s: stats idx %d out of bound!", __func__,
 				STATS_IDX(update_info->stream_handle));
 			return -EINVAL;
@@ -844,7 +848,7 @@ int msm_isp_update_stats_stream(struct vfe_device *vfe_dev, void *arg)
 				stream_info->sw_skip = *sw_skip_info;
 
 			if (sw_skip_info->stats_type_mask != 0) {
-				/* No image buffer skip, only stats skip */
+				
 				pr_debug("%s:%x skip type %x mode %d min %d max %d\n",
 					__func__, stream_info->stream_id,
 					sw_skip_info->stats_type_mask,

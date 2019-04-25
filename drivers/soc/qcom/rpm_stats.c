@@ -27,6 +27,7 @@
 #include <linux/uaccess.h>
 #include <asm/arch_timer.h>
 #include "rpm_stats.h"
+#include <soc/qcom/htc_util.h>
 
 #define GET_PDATA_OF_ATTR(attr) \
 	(container_of(attr, struct msm_rpmstats_kobj_attr, ka)->pd)
@@ -285,16 +286,21 @@ u64 htc_get_awake_time(int index, u32 count)
         return awake_time;
 }
 
-void msm_rpm_dump_stat(void)
+void msm_rpm_dump_stat(bool print_embedded)
 {
         void __iomem *reg;
         struct msm_rpm_stats_data_v3 data_v3;
         int i;
         u64 awake_time = 0;
+        char piece[32];
+        char output[256];
+
+        memset(piece, 0, sizeof(piece));
+        memset(output, 0, sizeof(output));
 
         if (rpm_stats_dev[DEV_V2].init) {
                 reg = rpm_stats_dev[DEV_V2].reg_base;
-                pr_info("%s: %u, %llums, %u, %llums\n", __func__,
+                k_pr_embedded_cond(print_embedded, "[K] %s: %u, %llums, %u, %llums\n", __func__,
                         msm_rpmstats_read_long_register_v2(reg, 0, offsetof(struct msm_rpm_stats_data_v2, count)),
                         get_time_in_msec(msm_rpmstats_read_quad_register_v2(reg, 0,
                                                         offsetof(struct msm_rpm_stats_data_v2, accumulated))),
@@ -320,19 +326,19 @@ void msm_rpm_dump_stat(void)
 
                         awake_time = 0;
                         if (!data_v3.is_sleep_mode) awake_time = get_time_in_msec(htc_get_awake_time(i, data_v3.count)) / 1000;
-                        if (!awake_time) {
-                                pr_info("[K] sleep_info_m.%d - %u (%d), %llums\n", i, data_v3.count,
-                                                                                 data_v3.is_sleep_mode,
-                                                                                 get_time_in_msec(data_v3.total_duration));
-                        } else {
-                                pr_info("[K] sleep_info_m.%d - %u (%d), %llums (awake last %llu s)\n", i, data_v3.count,
-                                                                                 data_v3.is_sleep_mode,
-                                                                                 get_time_in_msec(data_v3.total_duration),
-                                                                                 awake_time);
+                        memset(piece, 0, sizeof(piece));
+                        snprintf(piece, sizeof(piece), "%s(%d,%u,%d,%llus,%llus)",
+                            i > 0 ? "," : "",
+                            i,
+                            data_v3.count,
+                            data_v3.is_sleep_mode,
+                            get_time_in_sec(data_v3.total_duration),
+                            awake_time);
+                        strcat(output, piece);
                                 if(i && (awake_time > HTC_WARN_AWAKE_SEC))
                                         pr_err("[Power_SS_On] %s not sleep around %llu seconds!\n", __htc_ss__[i], awake_time);
-                        }
                 }
+                k_pr_embedded_cond(print_embedded, "[K] sleep_info_m: %s\n", output);
         }
 }
 

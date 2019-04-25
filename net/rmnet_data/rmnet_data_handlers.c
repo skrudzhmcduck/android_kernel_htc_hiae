@@ -104,9 +104,10 @@ void rmnet_print_packet(const struct sk_buff *skb, const char *dev, char dir)
 	if (!printlen)
 		return;
 
-	pr_err("[%s][%c] - PKT skb->len=%d skb->head=%p skb->data=%p skb->tail=%p skb->end=%p\n",
-		dev, dir, skb->len, (void *)skb->head, (void *)skb->data,
-		skb_tail_pointer(skb), skb_end_pointer(skb));
+	pr_err("[%s][%c] - PKT skb->len=%d skb->head=%pK skb->data=%pK\n",
+	       dev, dir, skb->len, (void *)skb->head, (void *)skb->data);
+	pr_err("[%s][%c] - PKT skb->tail=%pK skb->end=%pK\n",
+	       dev, dir, skb_tail_pointer(skb), skb_end_pointer(skb));
 
 	if (skb->len > 0)
 		len = skb->len;
@@ -273,7 +274,7 @@ static rx_handler_result_t rmnet_ingress_deliver_packet(struct sk_buff *skb,
  * @config:     Physical endpoint configuration for the ingress device
  *
  * Most MAP ingress functions are processed here. Packets are processed
- * individually; aggregates packets should use rmnet_map_ingress_handler()
+ * individually; aggregated packets should use rmnet_map_ingress_handler()
  *
  * Return:
  *      - RX_HANDLER_CONSUMED if packet is dropped
@@ -286,6 +287,18 @@ static rx_handler_result_t _rmnet_map_ingress_handler(struct sk_buff *skb,
 	uint8_t mux_id;
 	uint16_t len;
 	int ckresult;
+
+	if (RMNET_MAP_GET_CD_BIT(skb)) {
+		if (config->ingress_data_format
+		    & RMNET_INGRESS_FORMAT_MAP_COMMANDS)
+			return rmnet_map_command(skb, config);
+
+		LOGM("MAP command packet on %s; %s", skb->dev->name,
+		     "Not configured for MAP commands");
+		rmnet_kfree_skb(skb,
+				RMNET_STATS_SKBFREE_INGRESS_NOT_EXPECT_MAPC);
+		return RX_HANDLER_CONSUMED;
+	}
 
 	mux_id = RMNET_MAP_GET_MUX_ID(skb);
 	len = RMNET_MAP_GET_LENGTH(skb)
@@ -312,7 +325,8 @@ static rx_handler_result_t _rmnet_map_ingress_handler(struct sk_buff *skb,
 	if (config->ingress_data_format & RMNET_INGRESS_FORMAT_DEMUXING)
 		skb->dev = ep->egress_dev;
 
-	if (config->ingress_data_format & RMNET_INGRESS_FORMAT_MAP_CKSUMV3) {
+	if ((config->ingress_data_format & RMNET_INGRESS_FORMAT_MAP_CKSUMV3) ||
+	    (config->ingress_data_format & RMNET_INGRESS_FORMAT_MAP_CKSUMV4)) {
 		ckresult = rmnet_map_checksum_downlink_packet(skb);
 		trace_rmnet_map_checksum_downlink_packet(skb, ckresult);
 		rmnet_stats_dl_checksum(ckresult);
@@ -401,7 +415,8 @@ static int rmnet_map_egress_handler(struct sk_buff *skb,
 	additional_header_length = 0;
 
 	required_headroom = sizeof(struct rmnet_map_header_s);
-	if (config->egress_data_format & RMNET_EGRESS_FORMAT_MAP_CKSUMV3) {
+	if ((config->egress_data_format & RMNET_EGRESS_FORMAT_MAP_CKSUMV3) ||
+	    (config->egress_data_format & RMNET_EGRESS_FORMAT_MAP_CKSUMV4)) {
 		required_headroom +=
 			sizeof(struct rmnet_map_ul_checksum_header_s);
 		additional_header_length +=
@@ -418,13 +433,20 @@ static int rmnet_map_egress_handler(struct sk_buff *skb,
 		}
 	}
 
-	if (config->egress_data_format & RMNET_EGRESS_FORMAT_MAP_CKSUMV3) {
-		ckresult = rmnet_map_checksum_uplink_packet(skb, orig_dev);
+	if ((config->egress_data_format & RMNET_EGRESS_FORMAT_MAP_CKSUMV3) ||
+	    (config->egress_data_format & RMNET_EGRESS_FORMAT_MAP_CKSUMV4)) {
+		ckresult = rmnet_map_checksum_uplink_packet
+				(skb, orig_dev, config->egress_data_format);
 		trace_rmnet_map_checksum_uplink_packet(orig_dev, ckresult);
 		rmnet_stats_ul_checksum(ckresult);
 	}
 
-	map_header = rmnet_map_add_map_header(skb, additional_header_length);
+	if (!(config->egress_data_format & RMNET_EGRESS_FORMAT_AGGREGATION))
+		map_header = rmnet_map_add_map_header
+		(skb, additional_header_length, RMNET_MAP_NO_PAD_BYTES);
+	else
+		map_header = rmnet_map_add_map_header
+		(skb, additional_header_length, RMNET_MAP_ADD_PAD_BYTES);
 
 	if (!map_header) {
 		LOGD("%s", "Failed to add MAP header to egress packet");
@@ -495,20 +517,7 @@ rx_handler_result_t rmnet_ingress_handler(struct sk_buff *skb)
 	}
 
 	if (config->ingress_data_format & RMNET_INGRESS_FORMAT_MAP) {
-		if (RMNET_MAP_GET_CD_BIT(skb)) {
-			if (config->ingress_data_format
-			    & RMNET_INGRESS_FORMAT_MAP_COMMANDS) {
-				rc = rmnet_map_command(skb, config);
-			} else {
-				LOGM("MAP command packet on %s; %s", dev->name,
-				     "Not configured for MAP commands");
-				rmnet_kfree_skb(skb,
-				   RMNET_STATS_SKBFREE_INGRESS_NOT_EXPECT_MAPC);
-				return RX_HANDLER_CONSUMED;
-			}
-		} else {
 			rc = rmnet_map_ingress_handler(skb, config);
-		}
 	} else {
 		switch (ntohs(skb->protocol)) {
 		case ETH_P_MAP:

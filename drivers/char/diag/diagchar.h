@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -432,6 +432,7 @@ struct diagchar_dev {
 	struct list_head cmd_reg_list;
 	struct mutex cmd_reg_mutex;
 	uint32_t cmd_reg_count;
+	struct mutex diagfwd_channel_mutex;
 	
 	unsigned int poolsize;
 	unsigned int poolsize_hdlc;
@@ -546,6 +547,7 @@ extern uint16_t wrap_count;
 
 #define    SMDDIAG_NAME "DIAG"
 extern struct diagchar_dev *driver;
+extern bool DM_enable; 
 void diag_get_timestamp(char *time_str);
 void check_drain_timer(void);
 int diag_get_remote(int remote_info);

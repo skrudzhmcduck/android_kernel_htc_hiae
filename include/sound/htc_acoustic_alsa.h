@@ -31,6 +31,9 @@
 #define HTC_AUDIO_TFA9887 	0x40
 #define HTC_AUDIO_TFA9887L 	0x80
 
+#define HTC_AUDIO_TFA9888   0x200
+#define HTC_AUDIO_RT5503    0x400
+
 #define ACOUSTIC_IOCTL_MAGIC 'p'
 #define ACOUSTIC_SET_Q6_EFFECT                  _IOW(ACOUSTIC_IOCTL_MAGIC, 43, unsigned)
 #define ACOUSTIC_GET_HTC_REVISION               _IOR(ACOUSTIC_IOCTL_MAGIC, 44, unsigned)
@@ -41,6 +44,7 @@
 #define ACOUSTIC_GET_HW_REVISION                _IOR(ACOUSTIC_IOCTL_MAGIC, 49, struct device_info)
 #define ACOUSTIC_CONTROL_WAKELOCK               _IOW(ACOUSTIC_IOCTL_MAGIC, 77, unsigned)
 #define ACOUSTIC_DUMMY_WAKELOCK                 _IOW(ACOUSTIC_IOCTL_MAGIC, 78, unsigned)
+#define ACOUSTIC_TFA_CONTROL_WAKELOCK           _IOW(ACOUSTIC_IOCTL_MAGIC, 79, unsigned)
 #define ACOUSTIC_AMP_CTRL                       _IOWR(ACOUSTIC_IOCTL_MAGIC, 50, struct amp_ctrl)
 #define ACOUSTIC_GET_MID                        _IOR(ACOUSTIC_IOCTL_MAGIC, 51, unsigned)
 #define ACOUSTIC_RAMDUMP                        _IOW(ACOUSTIC_IOCTL_MAGIC, 99, unsigned)
@@ -48,6 +52,7 @@
 #define ACOUSTIC_UPDATE_DQ_STATUS               _IOW(ACOUSTIC_IOCTL_MAGIC, 52, unsigned)
 #define ACOUSTIC_ADSP_CMD                       _IOW(ACOUSTIC_IOCTL_MAGIC, 98, unsigned)
 #define ACOUSTIC_NOTIFIY_FM_SSR                 _IOW(ACOUSTIC_IOCTL_MAGIC, 53, unsigned)
+#define ACOUSTIC_GET_TFA_VER                    _IOR(ACOUSTIC_IOCTL_MAGIC, 97, unsigned)
 
 #define ACOUSTIC_FTM_BTPCM_SET_GPIO             _IOW(ACOUSTIC_IOCTL_MAGIC, 60, unsigned)
 #define ACOUSTIC_FTM_BTPCM_SET_PCM              _IOW(ACOUSTIC_IOCTL_MAGIC, 61, unsigned)
@@ -150,6 +155,7 @@ struct aud_ftm_btpcm_func_t {
 	void *user_data;
 };
 
+void htc_acoustic_register_spk_version(void (*spk_func)(unsigned char*));
 void htc_acoustic_register_ops(struct acoustic_ops *ops);
 void htc_acoustic_register_hs_amp(int (*aud_hs_amp_f)(int, int), struct file_operations* ops);
 int htc_acoustic_hs_amp_ctrl(int on, int dsp);
@@ -166,5 +172,6 @@ struct amp_power_ops {
 
 void htc_amp_power_register_ops(struct amp_power_ops *ops);
 void htc_amp_power_enable(bool enable);
+uint32_t htc_aud_component_to_flag(const char* hw_s);
 #endif
 

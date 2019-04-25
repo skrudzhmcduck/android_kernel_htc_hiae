@@ -415,6 +415,7 @@ static int htc_read_fuse(void){
 		}
 		fuse_data = readl_relaxed(addr);
 		pr_debug("%s: 0x%llX\n", __func__, fuse_data);
+		iounmap(addr);
 	} else {
 		return -ENOMEM;
 	}
@@ -446,7 +447,7 @@ static const u32 vddmx_pvs_retention_data[__MX_MAX__] =
 
 #define __MX_RETENTION_BMSK__	0x3
 #define __MX_RETENTION_SHFT__	0x0
-#define __CX_RETENTION_BMSK__	0xe
+#define __CX_RETENTION_BMSK__	0xe0
 #define __CX_RETENTION_SHFT__	0x5
 
 static int read_cx_fuse_setting(void){
@@ -485,12 +486,13 @@ static u32 get_min_mx(void) {
 	return lookup_val;
 }
 
-extern int *htc_target_quot;
-extern int htc_target_quot_len;
+extern int *htc_target_quot[2];
+extern int htc_target_quot_len[2];
 
 static int c_show(struct seq_file *m, void *v)
 {
 	int i;
+	int j, size;
 
 	seq_printf(m, "Processor\t: %s rev %d (%s)\n",
 		   cpu_name, read_cpuid_id() & 15, ELF_PLATFORM);
@@ -502,13 +504,6 @@ static int c_show(struct seq_file *m, void *v)
 	}
 	seq_printf(m, "min_vddcx\t: %d\n", get_min_cx());
 	seq_printf(m, "min_vddmx\t: %d\n", get_min_mx());
-	if(htc_target_quot) {
-		seq_printf(m, "CPU param\t: ");
-		for(i = 1; i < htc_target_quot_len; i++) {
-			seq_printf(m, "%d ", htc_target_quot[i]);
-		}
-		seq_printf(m, "\n");
-	}
 	
 	seq_puts(m, "Features\t: ");
 
@@ -535,6 +530,17 @@ static int c_show(struct seq_file *m, void *v)
 		seq_printf(m, "Hardware\t: %s\n", machine_name);
 	else
 		seq_printf(m, "Hardware\t: %s\n", arch_read_hardware_id());
+
+	seq_printf(m, "CPU param\t: ");
+	size = sizeof(htc_target_quot)/sizeof(int *);
+	for(i = 0; i < size; i++) {
+		if(htc_target_quot + i != NULL) {
+			for(j = 1; j < htc_target_quot_len[i]; j++) {
+				seq_printf(m, "%d ", htc_target_quot[i][j]);
+			}
+		}
+	}
+	seq_printf(m, "\n");
 
 	return 0;
 }
