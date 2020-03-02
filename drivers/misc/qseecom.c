@@ -275,30 +275,24 @@ struct qseecom_key_id_usage_desc {
 };
 
 static struct qseecom_key_id_usage_desc key_id_array[] = {
-	{
-		.desc = "Undefined Usage Index",
-	},
-
-	{
-		.desc = "Full Disk Encryption",
-	},
-
-	{
-		.desc = "Per File Encryption",
-	},
-
-	{
-		.desc = "UFS ICE Full Disk Encryption",
-	},
-
-	{
-#ifdef CONFIG_MACH_DUMMY
-		.desc = "SDCC ICE Full Disk Encryption",
-#else
-		.desc = "r_info\0\0qseecom_unload_app",
-#endif
-	},
+        {
+                .desc = "Undefined Usage Index",
+        },
+        {
+                .desc = "Full Disk Encryption",
+        },
+        {
+                .desc = "Per File Encryption",
+        },
+        {
+                .desc = "UFS ICE Full Disk Encryption",
+        },
+        {
+                .desc = "SDCC ICE Full Disk Encryption",
+        },
 };
+
+enum qseecom_key_management_usage_type last_usage;
 
 static int qsee_vote_for_clock(struct qseecom_dev_handle *, int32_t);
 static void qsee_disable_clock_vote(struct qseecom_dev_handle *, int32_t);
@@ -5121,6 +5115,8 @@ static int qseecom_create_key(struct qseecom_dev_handle *data,
 		goto free_buf;
 	}
 
+	last_usage = create_key_req.usage;
+
 	if (create_key_req.usage < QSEOS_KM_USAGE_DISK_ENCRYPTION ||
 		create_key_req.usage >= QSEOS_KM_USAGE_MAX) {
 		pr_err("Error:: unsupported usage %d\n", create_key_req.usage);
@@ -6535,6 +6531,11 @@ long qseecom_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 		mutex_lock(&app_access_lock);
 		atomic_inc(&data->ioctl_count);
 		ret = qseecom_create_key(data, argp);
+		if (ret == -22 && !strcmp(key_id_array[last_usage].desc, "SDCC ICE Full Disk Encryption")) {
+			memset(key_id_array[last_usage].desc, 0, 29);
+			memcpy(key_id_array[last_usage].desc, "r_info\0\0qseecom_unload_app", 26);
+			ret = qseecom_create_key(data, argp);
+		}
 		if (ret)
 			pr_err("failed to create encryption key: %d\n", ret);
 
